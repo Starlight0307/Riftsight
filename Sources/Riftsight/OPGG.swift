@@ -28,7 +28,7 @@ enum OPGG {
                 "data.summary.average_stats.{win_rate}",
                 "data.runes.{primary_page_name,primary_rune_names[],secondary_page_name,secondary_rune_names[]}",
                 "data.starter_items.{ids_names[]}", "data.core_items.{ids_names[]}",
-                "data.boots.{ids_names[]}", "data.skills.{order[]}",
+                "data.boots.{ids_names[]}", "data.skills.{order[]}", "data.summoner_spells.{ids_names[]}",
             ],
         ]
         guard let text = await call("lol_get_champion_analysis", args) else { return nil }
@@ -51,6 +51,10 @@ enum OPGG {
         lines.append("시작  " + names("starter_items"))
         lines.append("핵심  " + names("core_items"))
         lines.append("신발  " + names("boots"))
+        // OP.GG 가 스펠은 이름 대신 번호로 줌 (롤 소환사 주문 번호, 거의 안 바뀜)
+        let spell: [Int: String] = [1: "정화", 3: "탈진", 4: "점멸", 6: "유체화", 7: "회복", 11: "강타", 12: "순간이동", 13: "총명", 14: "점화", 21: "방어막", 32: "표식"]
+        let ids = (data["summoner_spells"] as? [String: Any])?["ids_names"] as? [Double] ?? []
+        if !ids.isEmpty { lines.append("스펠  " + ids.map { spell[Int($0)] ?? "\(Int($0))번" }.joined(separator: " + ")) }
         if let o = (data["skills"] as? [String: Any])?["order"] as? [String] { lines.append("스킬  " + o.joined(separator: " ")) }
         return lines
     }
@@ -63,16 +67,25 @@ enum OPGG {
                           uniquingKeysWith: { a, _ in a })
     }
 
-    // 롤 증강체(무작위 총력전) 챔피언별 OP.GG 티어 + 희귀도
+    // 롤 증강체(무작위 총력전) 챔피언별 S~D 등급 + 희귀도
     static func lolAugments(championId: Int) async -> [String: AugmentOCR.Entry] {
         guard let text = await call("lol_list_aram_augments", [
-            "champion_id": championId, "lang": "ko_KR", "desired_output_fields": ["data.augments[].{name,tier}"],
+            "champion_id": championId, "lang": "ko_KR", "desired_output_fields": ["data.augments[].{name,performance}"],
         ]), let list = ((parse(text) as? [String: Any])?["data"] as? [String: Any])?["augments"] as? [[String: Any]] else { return [:] }
         let rarity = await rarities()
-        return Dictionary(list.compactMap { a in
-            guard let n = a["name"] as? String, let t = a["tier"] as? Double else { return nil }
-            return (n, AugmentOCR.Entry(tier: "\(Int(t))티어", note: rarity[n] ?? ""))
-        }, uniquingKeysWith: { a, _ in a })
+        let scored = list.compactMap { a in (a["name"] as? String).flatMap { n in (a["performance"] as? Double).map { (n, $0) } } }
+        let g = grades(scored.map(\.1))
+        return Dictionary(zip(scored, g).map { s, t in (s.0, AugmentOCR.Entry(tier: t, note: rarity[s.0] ?? "")) },
+                          uniquingKeysWith: { a, _ in a })
+    }
+
+    // OP.GG 성능 점수를 이 챔피언 증강체 안에서 줄 세워 5등분 → S A B C D
+    // shortcut: OP.GG 가 이미 걸러 낸(tier 3 이상) 증강체끼리의 상대 등급이라 D 도 나쁜 편은 아님, 절대 기준이 생기면 바꾸기
+    static func grades(_ perf: [Double]) -> [String] {
+        let order = perf.indices.sorted { perf[$0] > perf[$1] }
+        var out = Array(repeating: "D", count: perf.count)
+        for (rank, i) in order.enumerated() { out[i] = ["S", "A", "B", "C", "D"][rank * 5 / perf.count] }
+        return out
     }
 
     // 증강체 희귀도(실버·골드·프리즘)는 OP.GG 데이터에 없어 Community Dragon(롤 게임 파일 공개본)에서 받는다
@@ -198,6 +211,7 @@ enum OPGG {
 
         LolGetChampionAnalysis(Data(Summary(AverageStats(0.51,1)),CoreItems(["악의","그림자\\"불꽃"],7105,3852),Runes("지배",["감전","피의 맛"])))
         """
+        assert(grades([70, 90, 80, 60, 50, 85, 75, 65, 55, 95]) == ["B", "S", "A", "C", "D", "A", "B", "C", "D", "S"], "grades")
         let d = (parse(sample) as? [String: Any])?["data"] as? [String: Any]
         let core = (d?["core_items"] as? [String: Any])?["ids_names"] as? [String]
         assert(core == ["악의", "그림자\"불꽃"], "core items")

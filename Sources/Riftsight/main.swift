@@ -50,7 +50,7 @@ struct OverlayView: View {
                 }
                 // 증강체 이름 바로 위에 등급 배지
                 ForEach(model.augments) { a in
-                    Text("\(a.tier)  \(a.note)")
+                    Text([a.note, a.tier].filter { !$0.isEmpty }.joined(separator: " "))
                         .font(.system(size: 15 * scale, weight: .heavy))
                         .foregroundStyle(.black)
                         .padding(.horizontal, 8).padding(.vertical, 3)
