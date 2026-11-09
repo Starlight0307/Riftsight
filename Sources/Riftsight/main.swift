@@ -4,6 +4,7 @@ import SwiftUI
 if CommandLine.arguments.contains("--selftest") {
     OPGG.selfTest()
     AugmentOCR.selfTest()
+    Updater.selfTest()
     exit(0)
 }
 
@@ -85,6 +86,7 @@ struct OverlayView: View {
         status.menu = menu
 
         Task {
+            await Updater.check()
             await syncTiers()  // 시즌·패치로 증강체가 바뀌었으면 등급표를 맞춰 둠
             await loop()
         }
