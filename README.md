@@ -12,7 +12,13 @@
 - TFT 증강체 등급: 공개 데이터가 없어(OP.GG 공식 데이터·Riot match API 모두 없음) 직접 채우는 등급표 사용
 - 게임 정보: 롤 클라이언트의 로컬 API(라이브 클라이언트·LCU)만 읽음. 게임 메모리는 건드리지 않음.
 
-## 실행
+## 설치 (DMG)
+```sh
+bash tools/make-dmg.sh          # dist/Riftsight.dmg 생성
+```
+DMG를 열어 Riftsight를 응용 프로그램 폴더로 끌어 놓는다. 애플 공증이 없는 임시 서명이라 처음 한 번은 **오른쪽 클릭 → 열기**로 연다.
+
+## 개발 중 실행
 ```sh
 swift run -c release            # 실행 (macOS 14+)
 swift run Riftsight --selftest  # 해석기·증강체 매칭 자체 점검
