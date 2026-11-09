@@ -18,8 +18,8 @@ MIN_GAMES = 10  # 이보다 적게 나온 증강체는 등급을 매기지 않�
 
 def get(url, auth=True):
     for _ in range(5):
-        # Community Dragon 은 파이썬 기본 User-Agent 를 403 으로 막는다
-        req = urllib.request.Request(url, headers={"X-Riot-Token": KEY} if auth else {"User-Agent": "Riftsight"})
+        # Riot·Community Dragon 모두 파이썬 기본 User-Agent 를 403 으로 막는다
+        req = urllib.request.Request(url, headers={"User-Agent": "Riftsight", **({"X-Riot-Token": KEY} if auth else {})})
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 if auth:
@@ -70,6 +70,8 @@ def main():
         print(f"\r경기 {n}/{len(match_ids)}", end="", file=sys.stderr)
     print(file=sys.stderr)
 
+    if not places:  # 기존 등급표를 빈 표로 덮어쓰지 않도록
+        sys.exit("경기 데이터에 증강체 정보가 없어요 (Riot 이 이번 시즌 match API 에서 증강체를 빼 둠). 등급표는 그대로 둡니다.")
     augments = {}
     for (s, api), ps in places.items():
         if s != latest_set or len(ps) < MIN_GAMES or api not in names:
