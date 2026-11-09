@@ -20,8 +20,10 @@ enum OPGG {
 
     // 챔피언 빌드 원본 (오버레이 카드·앱 상세 화면이 함께 씀)
     static func analysis(key: String, position: String) async -> [String: Any]? {
-        var args: [String: Any] = [
-            "game_mode": "ranked", "champion": key.uppercased(), "lang": "ko_KR",
+        let args: [String: Any] = [
+            // 라인 없는 게임(무작위 총력전·KIWI·연습)은 무작위 총력전 빌드. OP.GG 가 position 을 꼭 받지만 aram 에선 값을 무시함
+            "game_mode": position.isEmpty ? "aram" : "ranked", "position": position.isEmpty ? "mid" : position,
+            "champion": key.uppercased(), "lang": "ko_KR",
             "desired_output_fields": [
                 "data.summary.average_stats.{win_rate}",
                 "data.runes.{primary_page_name,primary_rune_names[],secondary_page_name,secondary_rune_names[]}",
@@ -29,7 +31,6 @@ enum OPGG {
                 "data.boots.{ids_names[]}", "data.skills.{order[]}",
             ],
         ]
-        if !position.isEmpty { args["position"] = position }
         guard let text = await call("lol_get_champion_analysis", args) else { return nil }
         return (parse(text) as? [String: Any])?["data"] as? [String: Any]
     }

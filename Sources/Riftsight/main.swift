@@ -88,7 +88,7 @@ struct OverlayView: View {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.ignoresMouseEvents = true  // 클릭은 게임으로 그대로 통과
-        window.level = .screenSaver
+        window.level = NSWindow.Level(NSWindow.Level.screenSaver.rawValue + 1)  // 롤 게임 창이 .screenSaver(1000) 층이라 같은 층이면 가려짐
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.contentView = NSHostingView(rootView: OverlayView(model: model))
         applyShown()
@@ -147,6 +147,8 @@ struct OverlayView: View {
 
     // 설정 화면에서 바꿔도 반영되도록 tick 마다 맞춘다
     func applyShown() {
+        // 켤 때 화면 크기에 묶이지 않도록 지금 주 모니터(메뉴 막대 있는 쪽)에 맞춤
+        if let f = NSScreen.screens.first?.frame, window.frame != f { window.setFrame(f, display: false) }
         if shown != window.isVisible { shown ? window.orderFrontRegardless() : window.orderOut(nil) }
     }
 
