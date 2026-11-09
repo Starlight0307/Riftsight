@@ -18,7 +18,8 @@ MIN_GAMES = 10  # 이보다 적게 나온 증강체는 등급을 매기지 않�
 
 def get(url, auth=True):
     for _ in range(5):
-        req = urllib.request.Request(url, headers={"X-Riot-Token": KEY} if auth else {})
+        # Community Dragon 은 파이썬 기본 User-Agent 를 403 으로 막는다
+        req = urllib.request.Request(url, headers={"X-Riot-Token": KEY} if auth else {"User-Agent": "Riftsight"})
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 if auth:
