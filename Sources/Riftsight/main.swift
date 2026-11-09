@@ -4,6 +4,7 @@ import SwiftUI
 if CommandLine.arguments.contains("--selftest") {
     OPGG.selfTest()
     AugmentOCR.selfTest()
+    League.selfTest()
     Updater.selfTest()
     exit(0)
 }
@@ -75,7 +76,8 @@ struct OverlayView: View {
     var status: NSStatusItem!
     var shown: Bool { UserDefaults.standard.bool(forKey: "overlayOn") }
     var scanAugments: Bool { shown && UserDefaults.standard.bool(forKey: "showAugments") }
-    var buildCache: [String: [String]] = [:]
+    var buildCache: [String: (lines: [String], spells: [Int])] = [:]
+    var spellsSetFor: String?  // 이 챔프 선택에서 스펠을 넣어 준 챔피언. 그 뒤 사용자가 바꾸면 덮어쓰지 않음
     var decks: [String]?
     var champIds: [String: Int] = [:]
     var lolAugCache: [String: AugmentOCR.Keyed] = [:]
@@ -187,15 +189,20 @@ struct OverlayView: View {
                 model.lines = decks ?? []
                 model.augments = scanAugments ? await AugmentOCR.scan(AugmentOCR.tft(), excluding: CGWindowID(window.windowNumber)) : []
             } else {
-                model.lines = await build(g.key, g.name, g.position)
+                model.lines = await build(g.key, g.name, g.position).lines
                 // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만
                 model.augments = scanAugments && g.mode != "CLASSIC"
                     ? await AugmentOCR.scan(await lolAugments(g.key), excluding: CGWindowID(window.windowNumber)) : []
             }
         } else if let c = await League.champSelect() {
             model.augments = []
-            model.lines = await build(c.key, c.name, c.position)
+            let b = await build(c.key, c.name, c.position)
+            model.lines = b.lines
+            if spellsSetFor != c.key, b.spells.count == 2, await League.setSpells(League.arrange(b.spells, current: c.spells)) {
+                spellsSetFor = c.key
+            }
         } else {
+            spellsSetFor = nil  // 다음 판 챔프 선택에서 다시 넣도록
             model.lines = []
             model.augments = []
         }
@@ -210,13 +217,13 @@ struct OverlayView: View {
         return table
     }
 
-    func build(_ key: String, _ name: String, _ pos: String) async -> [String] {
-        guard !key.isEmpty else { return [] }
+    func build(_ key: String, _ name: String, _ pos: String) async -> (lines: [String], spells: [Int]) {
+        guard !key.isEmpty else { return ([], []) }
         let k = key + pos
         if let hit = buildCache[k] { return hit }
-        let lines = await OPGG.build(key: key, name: name, position: pos)
-        buildCache[k] = lines
-        return lines
+        let b = await OPGG.build(key: key, name: name, position: pos)
+        buildCache[k] = b
+        return b
     }
 }
 

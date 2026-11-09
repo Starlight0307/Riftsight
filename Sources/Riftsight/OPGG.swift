@@ -25,7 +25,7 @@ enum OPGG {
             "game_mode": position.isEmpty ? "aram" : "ranked", "position": position.isEmpty ? "mid" : position,
             "champion": key.uppercased(), "lang": "ko_KR",
             "desired_output_fields": [
-                "data.summary.average_stats.{win_rate}",
+                "data.summary.average_stats.{win_rate,tier,rank}",
                 "data.runes.{primary_page_name,primary_rune_names[],secondary_page_name,secondary_rune_names[]}",
                 "data.starter_items.{ids_names[]}", "data.core_items.{ids_names[]}",
                 "data.boots.{ids_names[]}", "data.skills.{order[]}", "data.summoner_spells.{ids_names[]}",
@@ -35,14 +35,15 @@ enum OPGG {
         return (parse(text) as? [String: Any])?["data"] as? [String: Any]
     }
 
-    // 롤 빌드 카드 (한 줄씩)
-    static func build(key: String, name: String, position: String) async -> [String] {
-        guard let data = await analysis(key: key, position: position) else { return ["\(name): OP.GG 빌드를 불러오지 못했어요"] }
+    // 롤 빌드 카드 (한 줄씩) + 추천 스펠 번호(챔프 선택 때 자동으로 넣음)
+    static func build(key: String, name: String, position: String) async -> (lines: [String], spells: [Int]) {
+        guard let data = await analysis(key: key, position: position) else { return (["\(name): OP.GG 빌드를 불러오지 못했어요"], []) }
         func names(_ k: String) -> String { ((data[k] as? [String: Any])?["ids_names"] as? [String] ?? []).joined(separator: " → ") }
-        var lines = [name + (position.isEmpty ? "" : " · \(position)")]
-        if let w = ((data["summary"] as? [String: Any])?["average_stats"] as? [String: Any])?["win_rate"] as? Double {
-            lines[0] += String(format: " · 승률 %.1f%%", w * 100)
-        }
+        // shortcut: 아수라장(KIWI)도 OP.GG 에 따로 없어 무작위 총력전 통계로 보여 줌, OP.GG 가 모드를 추가하면 나누기
+        var lines = [name + " · " + (position.isEmpty ? "무작위 총력전" : position)]
+        let stats = (data["summary"] as? [String: Any])?["average_stats"] as? [String: Any]
+        if let t = stats?["tier"] as? Double, let r = stats?["rank"] as? Double { lines[0] += " · \(Int(t))티어 \(Int(r))위" }
+        if let w = stats?["win_rate"] as? Double { lines[0] += String(format: " · 승률 %.1f%%", w * 100) }
         if let r = data["runes"] as? [String: Any] {
             let p = (r["primary_rune_names"] as? [String] ?? []).joined(separator: ", ")
             let s = (r["secondary_rune_names"] as? [String] ?? []).joined(separator: ", ")
@@ -56,7 +57,7 @@ enum OPGG {
         let ids = (data["summoner_spells"] as? [String: Any])?["ids_names"] as? [Double] ?? []
         if !ids.isEmpty { lines.append("스펠  " + ids.map { spell[Int($0)] ?? "\(Int($0))번" }.joined(separator: " + ")) }
         if let o = (data["skills"] as? [String: Any])?["order"] as? [String] { lines.append("스킬  " + o.joined(separator: " ")) }
-        return lines
+        return (lines, ids.map { Int($0) })
     }
 
     // 영문 키(MonkeyKing) → 챔피언 번호. 증강체 조회가 번호로만 받는다
