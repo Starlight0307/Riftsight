@@ -31,8 +31,10 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>LSUIElement</key><true/>
 </dict></plist>
 EOF
-# 화면 기록 권한이 앱에 붙도록 서명 (애플 개발자 인증서가 없어 임시 서명)
-codesign --force --deep -s - "$APP"
+# 화면 기록 권한이 앱에 붙도록 서명. 임시 서명(-)은 빌드마다 다른 앱으로 보여 업데이트 때마다 권한을 다시 물으니,
+# 키체인에 자체 서명 인증서 "Riftsight Signing" 이 있으면 그걸로 서명해 권한을 유지
+ID=-; security find-certificate -c "Riftsight Signing" >/dev/null 2>&1 && ID="Riftsight Signing"
+codesign --force --deep -s "$ID" "$APP"
 
 mkdir -p dist/dmg && cp -R "$APP" dist/dmg/ && ln -s /Applications dist/dmg/Applications
 hdiutil create -volname Riftsight -srcfolder dist/dmg -ov -format UDZO dist/Riftsight.dmg >/dev/null
