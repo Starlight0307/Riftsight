@@ -53,6 +53,7 @@ struct OverlayView: View {
 @MainActor final class App: NSObject, NSApplicationDelegate {
     let model = Model()
     var window: NSWindow!
+    var mainWindow: NSWindow?
     var status: NSStatusItem!
     var shown = true
     var buildCache: [String: [String]] = [:]
@@ -75,16 +76,40 @@ struct OverlayView: View {
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         status.button?.title = "◈"
         let menu = NSMenu()
+        menu.addItem(withTitle: "Riftsight 열기", action: #selector(showMain), keyEquivalent: "")
         menu.addItem(withTitle: "오버레이 보이기/숨기기", action: #selector(toggle), keyEquivalent: "")
         menu.addItem(withTitle: "TFT 등급표 열기", action: #selector(openTiers), keyEquivalent: "")
         menu.addItem(withTitle: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.items.prefix(2).forEach { $0.target = self }
+        menu.items.prefix(3).forEach { $0.target = self }
+        showMain()
         status.menu = menu
 
         Task {
             await syncTiers()  // 시즌·패치로 증강체가 바뀌었으면 등급표를 맞춰 둠
             await loop()
         }
+    }
+
+    // 본창(티어·메타 덱). 닫아도 앱은 메뉴바에 남아 오버레이를 계속 띄운다
+    @objc func showMain() {
+        if mainWindow == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+                             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            w.title = "Riftsight"
+            w.titlebarAppearsTransparent = true
+            w.appearance = NSAppearance(named: .darkAqua)
+            w.isReleasedWhenClosed = false
+            w.contentView = NSHostingView(rootView: MainView())
+            w.center()
+            mainWindow = w
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        showMain()
+        return true
     }
 
     @objc func toggle() {

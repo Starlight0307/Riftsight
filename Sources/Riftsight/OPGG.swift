@@ -18,8 +18,8 @@ enum OPGG {
         return content.first?["text"] as? String
     }
 
-    // 롤 빌드 카드 (한 줄씩)
-    static func build(key: String, name: String, position: String) async -> [String] {
+    // 챔피언 빌드 원본 (오버레이 카드·앱 상세 화면이 함께 씀)
+    static func analysis(key: String, position: String) async -> [String: Any]? {
         var args: [String: Any] = [
             "game_mode": "ranked", "champion": key.uppercased(), "lang": "ko_KR",
             "desired_output_fields": [
@@ -30,8 +30,13 @@ enum OPGG {
             ],
         ]
         if !position.isEmpty { args["position"] = position }
-        guard let text = await call("lol_get_champion_analysis", args),
-              let data = (parse(text) as? [String: Any])?["data"] as? [String: Any] else { return ["\(name): OP.GG 빌드를 불러오지 못했어요"] }
+        guard let text = await call("lol_get_champion_analysis", args) else { return nil }
+        return (parse(text) as? [String: Any])?["data"] as? [String: Any]
+    }
+
+    // 롤 빌드 카드 (한 줄씩)
+    static func build(key: String, name: String, position: String) async -> [String] {
+        guard let data = await analysis(key: key, position: position) else { return ["\(name): OP.GG 빌드를 불러오지 못했어요"] }
         func names(_ k: String) -> String { ((data[k] as? [String: Any])?["ids_names"] as? [String] ?? []).joined(separator: " → ") }
         var lines = [name + (position.isEmpty ? "" : " · \(position)")]
         if let w = ((data["summary"] as? [String: Any])?["average_stats"] as? [String: Any])?["win_rate"] as? Double {
@@ -100,11 +105,25 @@ enum OPGG {
         }
     }
 
+    // 라인별 챔피언 티어: [{champion(한글), tier, rank, win_rate, pick_rate, ban_rate}]
+    static func laneTiers(_ position: String) async -> [[String: Any]] {
+        guard let text = await call("lol_list_lane_meta_champions", [
+            "lang": "ko_KR", "position": position,
+            "desired_output_fields": ["data.positions.\(position)[].{champion,tier,rank,win_rate,pick_rate,ban_rate}"],
+        ]), let pos = ((parse(text) as? [String: Any])?["data"] as? [String: Any])?["positions"] as? [String: Any] else { return [] }
+        return pos[position] as? [[String: Any]] ?? []
+    }
+
+    static func rawMetaDecks() async -> [[String: Any]] {
+        guard let text = await call("tft_list_meta_decks", [:]),
+              let j = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return [] }
+        return j["data"] as? [[String: Any]] ?? []
+    }
+
     // TFT 메타 덱 상위 5개
     static func metaDecks() async -> [String] {
-        guard let text = await call("tft_list_meta_decks", [:]),
-              let j = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-              let decks = j["data"] as? [[String: Any]] else { return ["OP.GG 메타 덱을 불러오지 못했어요"] }
+        let decks = await rawMetaDecks()
+        if decks.isEmpty { return ["OP.GG 메타 덱을 불러오지 못했어요"] }
         return ["메타 덱 (OP.GG)"] + decks.prefix(5).map { d in
             let name = (d["name"] as? [String: Any])?["ko_KR"] as? String ?? "?"
             let stat = d["stat"] as? [String: Any]

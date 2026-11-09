@@ -1,0 +1,301 @@
+import SwiftUI
+
+// 앱 본창: OP.GG 데스크톱 앱처럼 왼쪽 게임 줄 + 라인별 티어 / 메타 덱
+enum Theme {
+    static let bg = Color(red: 0.11, green: 0.11, blue: 0.12)
+    static let card = Color(red: 0.16, green: 0.16, blue: 0.18)
+    static let line = Color.white.opacity(0.06)
+    static let accent = Color(red: 0.33, green: 0.51, blue: 0.91)
+    static let sub = Color.white.opacity(0.55)
+
+    static func tier(_ t: Int) -> Color {
+        [1: Color(red: 0.0, green: 0.73, blue: 0.64), 2: accent, 3: .yellow, 4: .orange][t] ?? .gray
+    }
+}
+
+// 이 맥은 Xcode 없이 명령줄 도구만 있어 @State(매크로)를 못 쓰므로 화면 상태를 한 객체에 모은다
+@MainActor final class Store: ObservableObject {
+    enum Game: String { case lol = "롤", tft = "TFT" }
+    @Published var game = Game.lol
+    @Published var tiers: [String: [[String: Any]]] = [:]
+    @Published var picked: (name: String, lane: String)?
+    @Published var detail: [String: Any]?
+    @Published var detailFailed = false
+    @Published var decks: [[String: Any]] = []
+
+    func loadTiers() async {
+        guard tiers.isEmpty else { return }
+        for (lane, _) in LoLView.lanes { tiers[lane] = Array(await OPGG.laneTiers(lane).prefix(30)) }
+    }
+
+    func pick(_ name: String, _ lane: String) async {
+        picked = (name, lane)
+        detail = nil
+        detailFailed = false
+        guard let id = DDragon.shared.championId(name) else { detailFailed = true; return }
+        detail = await OPGG.analysis(key: id, position: lane)
+        detailFailed = detail == nil
+    }
+
+    func loadDecks() async {
+        if decks.isEmpty { decks = await OPGG.rawMetaDecks() }
+        await DDragon.shared.loadTFT()
+    }
+}
+
+struct Icon: View {
+    let url: URL?
+    var size: CGFloat = 28
+    var body: some View {
+        AsyncImage(url: url) { $0.resizable() } placeholder: { Theme.line }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.2))
+    }
+}
+
+struct MainView: View {
+    @StateObject private var store = Store()
+    @StateObject private var dd = DDragon.shared
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 10) {
+                ForEach([Store.Game.lol, .tft], id: \.self) { g in
+                    Button { store.game = g } label: {
+                        Text(g.rawValue).font(.system(size: 13, weight: .bold))
+                            .frame(width: 44, height: 44)
+                            .background(store.game == g ? Theme.accent : Theme.card, in: RoundedRectangle(cornerRadius: 10))
+                    }.buttonStyle(.plain)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(Color.black.opacity(0.35))
+
+            Group {
+                if !dd.ready { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
+                else if store.game == .lol { LoLView(store: store) }
+                else { TFTView(store: store) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .foregroundStyle(.white)
+        .background(Theme.bg)
+        .task { await dd.load() }
+    }
+}
+
+// MARK: - 롤
+
+struct LoLView: View {
+    static let lanes = [("top", "탑"), ("jungle", "정글"), ("mid", "미드"), ("adc", "원딜"), ("support", "서포터")]
+    @ObservedObject var store: Store
+
+    var body: some View {
+        if let p = store.picked {
+            ChampionDetail(store: store, name: p.name, lane: p.lane)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("챔피언 티어").font(.system(size: 22, weight: .bold))
+                    Text("OP.GG 랭크 게임 기준 · 챔피언을 누르면 빌드").font(.system(size: 12)).foregroundStyle(Theme.sub)
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(Self.lanes, id: \.0) { lane, title in
+                            LaneColumn(title: title, rows: store.tiers[lane] ?? []) { n in Task { await store.pick(n, lane) } }
+                        }
+                    }.padding(.top, 10)
+                }.padding(20)
+            }
+            .task { await store.loadTiers() }
+        }
+    }
+}
+
+struct LaneColumn: View {
+    let title: String
+    let rows: [[String: Any]]
+    let onPick: (String) -> Void
+    @ObservedObject private var dd = DDragon.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title).font(.system(size: 14, weight: .bold)).padding(12)
+            Divider().overlay(Theme.line)
+            if rows.isEmpty { ProgressView().padding(20).frame(maxWidth: .infinity) }
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
+                let name = r["champion"] as? String ?? "?"
+                let tier = Int(r["tier"] as? Double ?? 0)
+                Button { onPick(name) } label: {
+                    HStack(spacing: 8) {
+                        Text("\(Int(r["rank"] as? Double ?? 0))").font(.system(size: 11)).foregroundStyle(Theme.sub).frame(width: 18)
+                        Icon(url: dd.champion(name), size: 26)
+                        Text(name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(String(format: "%.0f%%", (r["win_rate"] as? Double ?? 0) * 100)).font(.system(size: 11)).foregroundStyle(Theme.sub)
+                        Text("\(tier)").font(.system(size: 11, weight: .bold))
+                            .frame(width: 20, height: 18).background(Theme.tier(tier), in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+struct ChampionDetail: View {
+    @ObservedObject var store: Store
+    let name: String, lane: String
+    @ObservedObject private var dd = DDragon.shared
+    var data: [String: Any]? { store.detail }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Button("‹ 티어 목록") { store.picked = nil }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                HStack(spacing: 14) {
+                    Icon(url: dd.champion(name), size: 64)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(name).font(.system(size: 24, weight: .bold))
+                        Text(LoLView.lanes.first { $0.0 == lane }?.1 ?? lane).foregroundStyle(Theme.sub)
+                    }
+                    Spacer()
+                    if let w = ((data?["summary"] as? [String: Any])?["average_stats"] as? [String: Any])?["win_rate"] as? Double {
+                        Stat(title: "승률", value: String(format: "%.1f%%", w * 100))
+                    }
+                }
+                if store.detailFailed { Text("OP.GG 빌드를 불러오지 못했어요").foregroundStyle(Theme.sub) }
+                else if let d = data {
+                    if let r = d["runes"] as? [String: Any] {
+                        Section("룬") {
+                            HStack(spacing: 18) {
+                                RuneRow(page: r["primary_page_name"] as? String, runes: r["primary_rune_names"] as? [String] ?? [])
+                                RuneRow(page: r["secondary_page_name"] as? String, runes: r["secondary_rune_names"] as? [String] ?? [])
+                            }
+                        }
+                    }
+                    ForEach([("starter_items", "시작 아이템"), ("core_items", "핵심 아이템"), ("boots", "신발")], id: \.0) { key, title in
+                        Section(title) { ItemRow(names: (d[key] as? [String: Any])?["ids_names"] as? [String] ?? [], arrows: key == "core_items") }
+                    }
+                    if let o = (d["skills"] as? [String: Any])?["order"] as? [String] {
+                        Section("스킬 순서") {
+                            HStack(spacing: 4) {
+                                ForEach(Array(o.enumerated()), id: \.offset) { _, k in
+                                    Text(k).font(.system(size: 12, weight: .bold)).frame(width: 24, height: 24)
+                                        .background(k == "R" ? Theme.accent : Theme.line, in: RoundedRectangle(cornerRadius: 5))
+                                }
+                            }
+                        }
+                    }
+                } else { ProgressView() }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    struct Section<C: View>: View {
+        let title: String
+        @ViewBuilder let content: C
+        init(_ title: String, @ViewBuilder content: () -> C) { self.title = title; self.content = content() }
+        var body: some View {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.sub)
+                content
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    struct RuneRow: View {
+        let page: String?, runes: [String]
+        @ObservedObject private var dd = DDragon.shared
+        var body: some View {
+            HStack(spacing: 6) {
+                if let p = page { Icon(url: dd.rune(p), size: 24) }
+                ForEach(runes, id: \.self) { Icon(url: dd.rune($0), size: 32).help($0) }
+            }
+        }
+    }
+
+    struct ItemRow: View {
+        let names: [String]
+        var arrows = true
+        @ObservedObject private var dd = DDragon.shared
+        var body: some View {
+            HStack(spacing: 6) {
+                ForEach(Array(names.enumerated()), id: \.offset) { i, n in
+                    if i > 0 && arrows { Text("›").foregroundStyle(Theme.sub) }
+                    VStack(spacing: 4) {
+                        Icon(url: dd.item(n), size: 40)
+                        Text(n).font(.system(size: 10)).foregroundStyle(Theme.sub).lineLimit(1).frame(width: 64)
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct Stat: View {
+    let title: String, value: String
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(value).font(.system(size: 18, weight: .bold))
+            Text(title).font(.system(size: 11)).foregroundStyle(Theme.sub)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - TFT
+
+struct TFTView: View {
+    @ObservedObject var store: Store
+    @ObservedObject private var dd = DDragon.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("TFT 메타 덱").font(.system(size: 22, weight: .bold))
+                Text("OP.GG 기준").font(.system(size: 12)).foregroundStyle(Theme.sub)
+                if store.decks.isEmpty { ProgressView().padding(30).frame(maxWidth: .infinity) }
+                ForEach(Array(store.decks.enumerated()), id: \.offset) { _, d in deckCard(d) }
+            }.padding(20)
+        }
+        .task { await store.loadDecks() }
+    }
+
+    func deckCard(_ d: [String: Any]) -> some View {
+        let stat = d["stat"] as? [String: Any]
+        let deck = stat?["deck"] as? [String: Any]
+        let units = (d["units"] as? [[String: Any]] ?? []).sorted { ($0["isCore"] as? Bool ?? false) && !($1["isCore"] as? Bool ?? false) }
+        let op = stat?["opTier"] as? String ?? "-"
+        return HStack(spacing: 14) {
+            Text(op).font(.system(size: 14, weight: .heavy)).frame(width: 40, height: 40)
+                .background(op == "OP" ? Theme.tier(1) : op == "S" ? Theme.accent : Theme.tier(3), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 8) {
+                Text((d["name"] as? [String: Any])?["ko_KR"] as? String ?? "?").font(.system(size: 15, weight: .bold))
+                HStack(spacing: 4) {
+                    ForEach(Array(units.enumerated()), id: \.offset) { _, u in
+                        let key = u["key"] as? String ?? ""
+                        Group {
+                            if let url = dd.tftUnit(key) { Icon(url: url, size: 34) }
+                            else { Text(String(key.split(separator: "_").last?.prefix(2) ?? "?")).font(.system(size: 10)).frame(width: 34, height: 34).background(Theme.line, in: RoundedRectangle(cornerRadius: 7)) }
+                        }
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(u["isCore"] as? Bool == true ? Color.yellow : .clear, lineWidth: 2))
+                    }
+                }
+            }
+            Spacer()
+            Stat(title: "평균 등수", value: String(format: "%.2f", deck?["avgPlacement"] as? Double ?? 0))
+            Stat(title: "순방률", value: String(format: "%.0f%%", (deck?["top4Rate"] as? Double ?? 0) * 100))
+            Stat(title: "1등률", value: String(format: "%.0f%%", (deck?["winRate"] as? Double ?? 0) * 100))
+        }
+        .padding(14)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+    }
+}
