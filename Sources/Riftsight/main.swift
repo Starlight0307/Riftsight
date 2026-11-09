@@ -32,7 +32,7 @@ struct OverlayView: View {
                 }
                 // 증강체 이름 바로 위에 등급 배지
                 ForEach(model.augments) { a in
-                    Text("\(a.tier)  \(String(format: "%.2f등", a.avg))")
+                    Text("\(a.tier)  \(a.note)")
                         .font(.system(size: 15, weight: .heavy))
                         .foregroundStyle(.black)
                         .padding(.horizontal, 8).padding(.vertical, 3)
@@ -56,6 +56,8 @@ struct OverlayView: View {
     var shown = true
     var buildCache: [String: [String]] = [:]
     var decks: [String]?
+    var champIds: [String: Int] = [:]
+    var lolAugCache: [String: AugmentOCR.Keyed] = [:]
 
     func applicationDidFinishLaunching(_ n: Notification) {
         let frame = NSScreen.main?.frame ?? .zero
@@ -97,10 +99,12 @@ struct OverlayView: View {
             if g.mode == "TFT" {
                 if decks == nil { decks = await OPGG.metaDecks() }
                 model.lines = decks ?? []
-                model.augments = shown ? await AugmentOCR.scan(excluding: CGWindowID(window.windowNumber)) : []
+                model.augments = shown ? await AugmentOCR.scan(AugmentOCR.tft, excluding: CGWindowID(window.windowNumber)) : []
             } else {
-                model.augments = []
                 model.lines = await build(g.key, g.name, g.position)
+                // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만
+                model.augments = shown && g.mode != "CLASSIC"
+                    ? await AugmentOCR.scan(await lolAugments(g.key), excluding: CGWindowID(window.windowNumber)) : []
             }
         } else if let c = await League.champSelect() {
             model.augments = []
@@ -109,6 +113,15 @@ struct OverlayView: View {
             model.lines = []
             model.augments = []
         }
+    }
+
+    func lolAugments(_ key: String) async -> AugmentOCR.Keyed {
+        if let hit = lolAugCache[key] { return hit }
+        if champIds.isEmpty { champIds = await OPGG.championIds() }
+        guard let id = champIds[key] else { return [:] }
+        let table = AugmentOCR.keyed(await OPGG.lolAugments(championId: id))
+        if !table.isEmpty { lolAugCache[key] = table }
+        return table
     }
 
     func build(_ key: String, _ name: String, _ pos: String) async -> [String] {
