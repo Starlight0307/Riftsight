@@ -30,7 +30,7 @@ enum Updater {
         guard let dmg = (j["assets"] as? [[String: Any]])?.first(where: { ($0["name"] as? String)?.hasSuffix(".dmg") == true })?["browser_download_url"] as? String,
               let url = URL(string: dmg) else { return }
 
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         let alert = NSAlert()
         alert.messageText = "새 버전 \(tag)이 있어요"
         alert.informativeText = "지금 업데이트하면 받아서 설치한 뒤 Riftsight를 다시 켭니다. (현재 \(cur))"

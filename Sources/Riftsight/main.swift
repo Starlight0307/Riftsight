@@ -68,7 +68,7 @@ struct OverlayView: View {
     }
 }
 
-@MainActor final class App: NSObject, NSApplicationDelegate {
+@MainActor final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = Model()
     var window: NSWindow!
     var mainWindow: NSWindow?
@@ -122,10 +122,17 @@ struct OverlayView: View {
             w.isReleasedWhenClosed = false
             w.contentView = NSHostingView(rootView: MainView())
             w.center()
+            w.delegate = self
             mainWindow = w
         }
-        NSApp.activate(ignoringOtherApps: true)
+        // 창이 열린 동안은 보통 앱처럼(Dock 아이콘·앞으로 나오기), 닫으면 다시 메뉴바 전용
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate()
         mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ n: Notification) {
+        if (n.object as? NSWindow) === mainWindow { NSApp.setActivationPolicy(.accessory) }
     }
 
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
