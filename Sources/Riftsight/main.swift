@@ -76,8 +76,9 @@ struct OverlayView: View {
         status.button?.title = "◈"
         let menu = NSMenu()
         menu.addItem(withTitle: "오버레이 보이기/숨기기", action: #selector(toggle), keyEquivalent: "")
+        menu.addItem(withTitle: "TFT 등급표 열기", action: #selector(openTiers), keyEquivalent: "")
         menu.addItem(withTitle: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.items.first?.target = self
+        menu.items.prefix(2).forEach { $0.target = self }
         status.menu = menu
 
         Task { await loop() }
@@ -86,6 +87,21 @@ struct OverlayView: View {
     @objc func toggle() {
         shown.toggle()
         shown ? window.orderFrontRegardless() : window.orderOut(nil)
+    }
+
+    // 등급표가 없으면 OP.GG 의 이번 시즌 증강체 이름을 채운 양식을 만들어 연다
+    @objc func openTiers() {
+        Task {
+            let f = AugmentOCR.tftFile
+            if !FileManager.default.fileExists(atPath: f.path) {
+                let augs = await OPGG.tftAugments().sorted { ($0.rarity, $0.name) < ($1.rarity, $1.name) }
+                let head = "# 맨 앞 ? 를 S·A·B·C·D 로 바꾸세요. ? 로 남긴 줄은 쓰지 않습니다. # 뒤는 메모.\n"
+                let body = augs.map { "? \($0.name)  # \($0.rarity)" }.joined(separator: "\n")
+                try? FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? (head + body + "\n").write(to: f, atomically: true, encoding: .utf8)
+            }
+            NSWorkspace.shared.open(f)
+        }
     }
 
     func loop() async {
@@ -100,7 +116,7 @@ struct OverlayView: View {
             if g.mode == "TFT" {
                 if decks == nil { decks = await OPGG.metaDecks() }
                 model.lines = decks ?? []
-                model.augments = shown ? await AugmentOCR.scan(AugmentOCR.tft, excluding: CGWindowID(window.windowNumber)) : []
+                model.augments = shown ? await AugmentOCR.scan(AugmentOCR.tft(), excluding: CGWindowID(window.windowNumber)) : []
             } else {
                 model.lines = await build(g.key, g.name, g.position)
                 // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만

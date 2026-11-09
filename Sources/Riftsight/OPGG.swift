@@ -86,6 +86,20 @@ enum OPGG {
         return r
     }
 
+    // TFT 증강체 이름과 희귀도 (등급표 양식 만들기용)
+    static func tftAugments() async -> [(name: String, rarity: String)] {
+        guard let text = await call("tft_list_augments", ["lang": "ko_KR"]),
+              let j = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let headers = j["headers"] as? [String], let rows = j["rows"] as? [[Any]],
+              let ni = headers.firstIndex(of: "name"), let ti = headers.firstIndex(of: "tier") else { return [] }
+        let ko = ["silver": "실버", "gold": "골드", "prism": "프리즘"]
+        var seen = Set<String>()  // 같은 이름이 여러 번 나옴
+        return rows.compactMap { r in
+            guard let n = r[ni] as? String, seen.insert(n).inserted else { return nil }
+            return (n, ko[r[ti] as? String ?? ""] ?? "")
+        }
+    }
+
     // TFT 메타 덱 상위 5개
     static func metaDecks() async -> [String] {
         guard let text = await call("tft_list_meta_decks", [:]),

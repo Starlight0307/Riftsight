@@ -13,15 +13,24 @@ enum AugmentOCR {
     struct Entry { let tier: String; let note: String }
     typealias Keyed = [String: (String, Entry)]
 
-    // TFT 등급표 파일 (tools/augment_tiers.py). Riot API 에서 증강체가 빠져 지금은 비어 있음
-    // shortcut: 앱에 묶여 있어 등급표를 바꾸면 다시 빌드해야 함, 자주 바꾸게 되면 원격 파일로 받기
-    static let tft: Keyed = {
-        struct Row: Decodable { let tier: String; let avg: Double }
-        struct File: Decodable { let augments: [String: Row] }
-        guard let url = Bundle.module.url(forResource: "augment_tiers", withExtension: "json"),
-              let d = try? Data(contentsOf: url), let f = try? JSONDecoder().decode(File.self, from: d) else { return [:] }
-        return keyed(f.augments.mapValues { Entry(tier: $0.tier, note: String(format: "%.2f등", $0.avg)) })
-    }()
+    // TFT 증강체 성적은 공개 데이터가 없어 사용자가 직접 채우는 등급표를 쓴다 (메뉴 → TFT 등급표 열기)
+    static let tftFile = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Riftsight/tft_tiers.txt")
+
+    // 고치면 다음 화면 읽기부터 바로 반영되도록 매번 읽는다 (파일이 작음)
+    static func tft() -> Keyed { keyed(parseTiers((try? String(contentsOf: tftFile, encoding: .utf8)) ?? "")) }
+
+    // 한 줄에 "등급 이름" (예: "S 대출 선지급"). # 뒤는 메모, 등급이 S·A·B·C·D 가 아니면 건너뜀
+    static func parseTiers(_ text: String) -> [String: Entry] {
+        var out: [String: Entry] = [:]
+        for raw in text.split(separator: "\n") {
+            let line = raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0].trimmingCharacters(in: .whitespaces)
+            guard let sp = line.firstIndex(of: " ") else { continue }
+            let tier = line[..<sp].uppercased(), name = line[sp...].trimmingCharacters(in: .whitespaces)
+            if ["S", "A", "B", "C", "D"].contains(tier), !name.isEmpty { out[name] = Entry(tier: tier, note: "") }
+        }
+        return out
+    }
 
     static func keyed(_ t: [String: Entry]) -> Keyed {
         Dictionary(t.map { (norm($0.key), ($0.key, $0.value)) }, uniquingKeysWith: { a, _ in a })
@@ -65,6 +74,8 @@ enum AugmentOCR {
         assert(m("대출선지급 II") == "대출 선지급")
         assert(m("초월") == "초월")
         assert(m("초월적인 힘") == nil, "2글자 이름은 정확히 같을 때만")
+        let p = parseTiers("# 메모\nS 대출 선지급  # 골드\n? 초월\na 빛나는 별\nX 엉뚱\n")
+        assert(p.count == 2 && p["대출 선지급"]?.tier == "S" && p["빛나는 별"]?.tier == "A", "parseTiers")
         print("AugmentOCR.match self-test OK")
     }
 }
