@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // 앱 본창: OP.GG 데스크톱 앱처럼 왼쪽 게임 줄 + 라인별 티어 / 메타 덱
@@ -313,6 +314,7 @@ struct SettingsView: View {
     @AppStorage("corner") var corner = "tl"
     @AppStorage("opacity") var opacity = 0.7
     @AppStorage("scale") var scale = 1.0
+    var screenOK: Bool { CGPreflightScreenCaptureAccess() }  // 권한은 앱을 다시 켜야 반영돼서 매번 읽어도 됨
 
     var body: some View {
         ScrollView {
@@ -323,6 +325,19 @@ struct SettingsView: View {
                     Toggle("게임 위에 오버레이 띄우기", isOn: $overlayOn)
                     Toggle("빌드·메타 덱 패널", isOn: $showPanel).disabled(!overlayOn)
                     Toggle("증강체 등급 배지 (끄면 화면 읽기도 멈춤)", isOn: $showAugments).disabled(!overlayOn)
+                }
+
+                card("화면 기록 권한") {
+                    // 증강체 화면을 읽을 때만 쓰는 권한이라 게임 중에 처음 묻게 되므로 여기서 미리 켤 수 있게
+                    Text(screenOK ? "허용됨 — 증강체 화면을 읽을 수 있어요" : "아직 허용 안 됨 — 증강체 배지를 쓰려면 필요해요")
+                        .foregroundStyle(screenOK ? Theme.tier(1) : .orange)
+                    if !screenOK {
+                        Button("권한 요청 · 시스템 설정 열기") {
+                            CGRequestScreenCaptureAccess()
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+                        }
+                        Text("시스템 설정에서 Riftsight 를 켠 뒤, 메뉴바 ◈ → 종료 후 다시 실행해 주세요.").font(.system(size: 12)).foregroundStyle(Theme.sub)
+                    }
                 }
 
                 card("모양") {
