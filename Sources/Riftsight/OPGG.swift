@@ -76,8 +76,11 @@ enum OPGG {
         let rarity = await rarities()
         let scored = list.compactMap { a in (a["name"] as? String).flatMap { n in (a["performance"] as? Double).map { (n, $0) } } }
         let g = grades(scored.map(\.1))
-        return Dictionary(zip(scored, g).map { s, t in (s.0, AugmentOCR.Entry(tier: t, note: rarity[s.0] ?? "")) },
-                          uniquingKeysWith: { a, _ in a })
+        let graded = Dictionary(zip(scored, g).map { s, t in (s.0, AugmentOCR.Entry(tier: t, note: rarity[s.0] ?? "")) },
+                                uniquingKeysWith: { a, _ in a })
+        // OP.GG 는 성적 좋은(tier 3 이상) 증강체만 주므로, 나머지(아수라장 전용 포함)는 희귀도만 보이고 등급은 "자료 없음"
+        let rest = rarity.filter { graded[$0.key] == nil }.mapValues { AugmentOCR.Entry(tier: "자료 없음", note: $0) }
+        return graded.merging(rest) { a, _ in a }
     }
 
     // OP.GG 성능 점수를 이 챔피언 증강체 안에서 줄 세워 5등분 → S A B C D

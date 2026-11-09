@@ -42,7 +42,9 @@ enum AugmentOCR {
     static func match(_ line: String, in k: Keyed) -> (String, Entry)? {
         let n = norm(line)
         if let hit = k[n] { return hit }
-        return k.filter { $0.key.count >= 3 && n.contains($0.key) }.max(by: { $0.key.count < $1.key.count })?.value
+        if let hit = k.filter({ $0.key.count >= 3 && n.contains($0.key) }).max(by: { $0.key.count < $1.key.count }) { return hit.value }
+        // 긴 이름은 카드에서 두 줄로 나뉘어 읽히므로 첫 줄(6글자 이상, "업그레이드" 같은 둘째 줄은 거름)이 이름 앞부분이면 인정
+        return n.count >= 6 ? k.filter { $0.key.hasPrefix(n) }.min(by: { $0.key.count < $1.key.count })?.value : nil
     }
 
     static func scan(_ table: Keyed, excluding window: CGWindowID?) async -> [AugmentHit] {
@@ -75,12 +77,14 @@ enum AugmentOCR {
 
     static func selfTest() {
         // 등급표 없이 매칭 규칙만 확인
-        let k = keyed(["대출 선지급": Entry(tier: "A", note: ""), "초월": Entry(tier: "S", note: "")])
+        let k = keyed(["대출 선지급": Entry(tier: "A", note: ""), "초월": Entry(tier: "S", note: ""), "꽃피는 새벽의 검 업그레이드": Entry(tier: "B", note: ""), "업그레이드: 즈롯 차원문": Entry(tier: "C", note: "")])
         func m(_ l: String) -> String? { match(l, in: k)?.0 }
         assert(m("대출 선지급") == "대출 선지급")
         assert(m("대출선지급 II") == "대출 선지급")
         assert(m("초월") == "초월")
         assert(m("초월적인 힘") == nil, "2글자 이름은 정확히 같을 때만")
+        assert(m("꽃피는 새벽의 검") == "꽃피는 새벽의 검 업그레이드", "two-line name")
+        assert(m("업그레이드") == nil, "short prefix")
         let p = parseTiers("# 메모\nS 대출 선지급  # 골드\n? 초월\na 빛나는 별\nX 엉뚱\n")
         assert(p.count == 2 && p["대출 선지급"]?.tier == "S" && p["빛나는 별"]?.tier == "A", "parseTiers")
         let m = mergeTiers("S 대출 선지급\nA 사라진 증강체\n", [("대출 선지급", "골드"), ("새 증강체", "실버")])
