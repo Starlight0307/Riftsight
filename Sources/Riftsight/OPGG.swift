@@ -57,27 +57,33 @@ enum OPGG {
                           uniquingKeysWith: { a, _ in a })
     }
 
-    // 롤 증강체(무작위 총력전) 챔피언별 성능 → S~D 등급표
+    // 롤 증강체(무작위 총력전) 챔피언별 OP.GG 티어 + 희귀도
     static func lolAugments(championId: Int) async -> [String: AugmentOCR.Entry] {
         guard let text = await call("lol_list_aram_augments", [
-            "champion_id": championId, "lang": "ko_KR", "desired_output_fields": ["data.augments[].{name,performance}"],
+            "champion_id": championId, "lang": "ko_KR", "desired_output_fields": ["data.augments[].{name,tier}"],
         ]), let list = ((parse(text) as? [String: Any])?["data"] as? [String: Any])?["augments"] as? [[String: Any]] else { return [:] }
-        let scored = list.compactMap { a -> (String, Double)? in
-            guard let n = a["name"] as? String, let p = a["performance"] as? Double, p > 0 else { return nil }  // 0 = 표본 없음
-            return (n, p)
-        }
-        return grade(scored).mapValues { AugmentOCR.Entry(tier: $0.0, note: String(format: "성능 %.0f", $0.1)) }
+        let rarity = await rarities()
+        return Dictionary(list.compactMap { a in
+            guard let n = a["name"] as? String, let t = a["tier"] as? Double else { return nil }
+            return (n, AugmentOCR.Entry(tier: "\(Int(t))티어", note: rarity[n] ?? ""))
+        }, uniquingKeysWith: { a, _ in a })
     }
 
-    // OP.GG 의 증강체 "tier" 는 희귀도라서, 성능 점수 순위(상위 15/40/70/90%)로 등급을 매긴다
-    static func grade(_ scored: [(String, Double)]) -> [String: (String, Double)] {
-        let sorted = scored.sorted { $0.1 > $1.1 }
-        var out: [String: (String, Double)] = [:]
-        for (i, (name, p)) in sorted.enumerated() {
-            let r = Double(i) / Double(max(sorted.count, 1))
-            out[name] = (r < 0.15 ? "S" : r < 0.40 ? "A" : r < 0.70 ? "B" : r < 0.90 ? "C" : "D", p)
-        }
-        return out
+    // 증강체 희귀도(실버·골드·프리즘)는 OP.GG 데이터에 없어 Community Dragon(롤 게임 파일 공개본)에서 받는다
+    // shortcut: 아레나용 희귀도 표라 무작위 총력전과 다른 증강체가 있으면 틀릴 수 있음, 어긋나면 모드별 표로 바꾸기
+    static var rarityCache: [String: String]?
+    static func rarities() async -> [String: String] {
+        if let r = rarityCache { return r }
+        var req = URLRequest(url: URL(string: "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/ko_kr/v1/cherry-augments.json")!)
+        req.setValue("Riftsight", forHTTPHeaderField: "User-Agent")  // 기본 User-Agent 는 403
+        guard let (d, _) = try? await URLSession.shared.data(for: req),
+              let list = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return [:] }
+        let ko = ["kSilver": "실버", "kGold": "골드", "kPrismatic": "프리즘"]
+        let r = Dictionary(list.compactMap { a in
+            (a["nameTRA"] as? String).flatMap { n in ko[a["rarity"] as? String ?? ""].map { (n, $0) } }
+        }, uniquingKeysWith: { a, _ in a })
+        if !r.isEmpty { rarityCache = r }
+        return r
     }
 
     // TFT 메타 덱 상위 5개
@@ -163,8 +169,6 @@ enum OPGG {
         assert(core == ["악의", "그림자\"불꽃"], "core items")
         assert(((d?["summary"] as? [String: Any])?["average_stats"] as? [String: Any])?["win_rate"] as? Double == 0.51, "win rate")
         assert((d?["runes"] as? [String: Any])?["primary_page_name"] as? String == "지배", "runes")
-        let g = grade((1...20).map { ("a\($0)", Double($0)) })
-        assert(g["a20"]?.0 == "S" && g["a18"]?.0 == "S" && g["a17"]?.0 == "A" && g["a1"]?.0 == "D", "grade")
         print("OPGG.parse self-test OK")
     }
 }

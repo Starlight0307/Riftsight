@@ -36,7 +36,7 @@ struct OverlayView: View {
                         .font(.system(size: 15, weight: .heavy))
                         .foregroundStyle(.black)
                         .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(color(a.tier), in: Capsule())
+                        .background(color(a), in: Capsule())
                         .position(x: a.box.midX * geo.size.width, y: (1 - a.box.maxY) * geo.size.height - 16)
                 }
             }
@@ -44,8 +44,9 @@ struct OverlayView: View {
         }
     }
 
-    func color(_ t: String) -> Color {
-        ["S": .orange, "A": .yellow, "B": .green, "C": .mint][t] ?? .gray
+    // 롤 증강체는 희귀도 색, TFT 는 등급 색
+    func color(_ a: AugmentHit) -> Color {
+        ["프리즘": .purple, "골드": .yellow, "실버": Color(white: 0.8)][a.note] ?? ["S": .orange, "A": .yellow, "B": .green, "C": .mint][a.tier] ?? .gray
     }
 }
 
