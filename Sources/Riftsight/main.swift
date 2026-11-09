@@ -13,28 +13,45 @@ if CommandLine.arguments.contains("--selftest") {
     @Published var augments: [AugmentHit] = []
 }
 
+// 설정 화면(SettingsView)과 오버레이가 함께 쓰는 값. UserDefaults 에 저장돼 다시 켜도 유지
+enum Pref {
+    static let defaults: [String: Any] = [
+        "overlayOn": true, "showPanel": true, "showAugments": true,
+        "corner": "tl", "opacity": 0.7, "scale": 1.0,
+    ]
+}
+
 struct OverlayView: View {
     @ObservedObject var model: Model
+    @AppStorage("showPanel") var showPanel = true
+    @AppStorage("corner") var corner = "tl"
+    @AppStorage("opacity") var opacity = 0.7
+    @AppStorage("scale") var scale = 1.0
 
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                if !model.lines.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
+            ZStack {
+                if showPanel && !model.lines.isEmpty {
+                    let top = corner.hasPrefix("t"), left = corner.hasSuffix("l")
+                    VStack(alignment: .leading, spacing: 4 * scale) {
                         ForEach(Array(model.lines.enumerated()), id: \.offset) { i, l in
-                            Text(l).font(.system(size: i == 0 ? 14 : 12, weight: i == 0 ? .bold : .regular))
+                            Text(l).font(.system(size: (i == 0 ? 14 : 12) * scale, weight: i == 0 ? .bold : .regular))
                         }
                     }
                     .foregroundStyle(.white)
                     .padding(10)
-                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
-                    .frame(maxWidth: 420, alignment: .leading)
-                    .padding(.leading, 16).padding(.top, 90)
+                    .background(.black.opacity(opacity), in: RoundedRectangle(cornerRadius: 8))
+                    .frame(maxWidth: 420 * scale, alignment: .leading)
+                    // 위쪽은 게임 상단 정보, 아래쪽은 미니맵·상점을 피하도록 여백
+                    .padding(left ? .leading : .trailing, 16)
+                    .padding(top ? .top : .bottom, top ? 90 : 120)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: Alignment(horizontal: left ? .leading : .trailing, vertical: top ? .top : .bottom))
                 }
                 // 증강체 이름 바로 위에 등급 배지
                 ForEach(model.augments) { a in
                     Text("\(a.tier)  \(a.note)")
-                        .font(.system(size: 15, weight: .heavy))
+                        .font(.system(size: 15 * scale, weight: .heavy))
                         .foregroundStyle(.black)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(color(a), in: Capsule())
@@ -56,13 +73,15 @@ struct OverlayView: View {
     var window: NSWindow!
     var mainWindow: NSWindow?
     var status: NSStatusItem!
-    var shown = true
+    var shown: Bool { UserDefaults.standard.bool(forKey: "overlayOn") }
+    var scanAugments: Bool { shown && UserDefaults.standard.bool(forKey: "showAugments") }
     var buildCache: [String: [String]] = [:]
     var decks: [String]?
     var champIds: [String: Int] = [:]
     var lolAugCache: [String: AugmentOCR.Keyed] = [:]
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        UserDefaults.standard.register(defaults: Pref.defaults)
         let frame = NSScreen.main?.frame ?? .zero
         window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isOpaque = false
@@ -72,7 +91,7 @@ struct OverlayView: View {
         window.level = .screenSaver
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.contentView = NSHostingView(rootView: OverlayView(model: model))
-        window.orderFrontRegardless()
+        applyShown()
 
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         status.button?.title = "◈"
@@ -115,8 +134,13 @@ struct OverlayView: View {
     }
 
     @objc func toggle() {
-        shown.toggle()
-        shown ? window.orderFrontRegardless() : window.orderOut(nil)
+        UserDefaults.standard.set(!shown, forKey: "overlayOn")
+        applyShown()
+    }
+
+    // 설정 화면에서 바꿔도 반영되도록 tick 마다 맞춘다
+    func applyShown() {
+        if shown != window.isVisible { shown ? window.orderFrontRegardless() : window.orderOut(nil) }
     }
 
     @objc func openTiers() {
@@ -147,15 +171,16 @@ struct OverlayView: View {
     }
 
     func tick() async {
+        applyShown()
         if let g = await League.liveGame() {
             if g.mode == "TFT" {
                 if decks == nil { decks = await OPGG.metaDecks() }
                 model.lines = decks ?? []
-                model.augments = shown ? await AugmentOCR.scan(AugmentOCR.tft(), excluding: CGWindowID(window.windowNumber)) : []
+                model.augments = scanAugments ? await AugmentOCR.scan(AugmentOCR.tft(), excluding: CGWindowID(window.windowNumber)) : []
             } else {
                 model.lines = await build(g.key, g.name, g.position)
                 // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만
-                model.augments = shown && g.mode != "CLASSIC"
+                model.augments = scanAugments && g.mode != "CLASSIC"
                     ? await AugmentOCR.scan(await lolAugments(g.key), excluding: CGWindowID(window.windowNumber)) : []
             }
         } else if let c = await League.champSelect() {

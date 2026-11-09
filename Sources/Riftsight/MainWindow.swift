@@ -15,7 +15,7 @@ enum Theme {
 
 // 이 맥은 Xcode 없이 명령줄 도구만 있어 @State(매크로)를 못 쓰므로 화면 상태를 한 객체에 모은다
 @MainActor final class Store: ObservableObject {
-    enum Game: String { case lol = "롤", tft = "TFT" }
+    enum Game: String { case lol = "롤", tft = "TFT", settings = "설정" }
     @Published var game = Game.lol
     @Published var tiers: [String: [[String: Any]]] = [:]
     @Published var picked: (name: String, lane: String)?
@@ -60,14 +60,9 @@ struct MainView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 10) {
-                ForEach([Store.Game.lol, .tft], id: \.self) { g in
-                    Button { store.game = g } label: {
-                        Text(g.rawValue).font(.system(size: 13, weight: .bold))
-                            .frame(width: 44, height: 44)
-                            .background(store.game == g ? Theme.accent : Theme.card, in: RoundedRectangle(cornerRadius: 10))
-                    }.buttonStyle(.plain)
-                }
+                ForEach([Store.Game.lol, .tft], id: \.self) { railButton($0) }
                 Spacer()
+                railButton(.settings)
             }
             .padding(10)
             .background(Color.black.opacity(0.35))
@@ -75,13 +70,22 @@ struct MainView: View {
             Group {
                 if !dd.ready { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
                 else if store.game == .lol { LoLView(store: store) }
-                else { TFTView(store: store) }
+                else if store.game == .tft { TFTView(store: store) }
+                else { SettingsView() }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .foregroundStyle(.white)
         .background(Theme.bg)
         .task { await dd.load() }
+    }
+
+    func railButton(_ g: Store.Game) -> some View {
+        Button { store.game = g } label: {
+            Text(g.rawValue).font(.system(size: 13, weight: .bold))
+                .frame(width: 44, height: 44)
+                .background(store.game == g ? Theme.accent : Theme.card, in: RoundedRectangle(cornerRadius: 10))
+        }.buttonStyle(.plain)
     }
 }
 
@@ -296,6 +300,86 @@ struct TFTView: View {
             Stat(title: "1등률", value: String(format: "%.0f%%", (deck?["winRate"] as? Double ?? 0) * 100))
         }
         .padding(14)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+// MARK: - 설정
+
+struct SettingsView: View {
+    @AppStorage("overlayOn") var overlayOn = true
+    @AppStorage("showPanel") var showPanel = true
+    @AppStorage("showAugments") var showAugments = true
+    @AppStorage("corner") var corner = "tl"
+    @AppStorage("opacity") var opacity = 0.7
+    @AppStorage("scale") var scale = 1.0
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("설정").font(.system(size: 22, weight: .bold))
+
+                card("오버레이") {
+                    Toggle("게임 위에 오버레이 띄우기", isOn: $overlayOn)
+                    Toggle("빌드·메타 덱 패널", isOn: $showPanel).disabled(!overlayOn)
+                    Toggle("증강체 등급 배지 (끄면 화면 읽기도 멈춤)", isOn: $showAugments).disabled(!overlayOn)
+                }
+
+                card("모양") {
+                    Picker("패널 위치", selection: $corner) {
+                        Text("왼쪽 위").tag("tl"); Text("오른쪽 위").tag("tr")
+                        Text("왼쪽 아래").tag("bl"); Text("오른쪽 아래").tag("br")
+                    }.pickerStyle(.segmented)
+                    HStack {
+                        Text("패널 배경 진하기")
+                        Slider(value: $opacity, in: 0.2...1)
+                        Text("\(Int(opacity * 100))%").monospacedDigit().frame(width: 44, alignment: .trailing)
+                    }
+                    HStack {
+                        Text("글자 크기")
+                        Slider(value: $scale, in: 0.8...1.6, step: 0.1)
+                        Text("\(Int(scale * 100))%").monospacedDigit().frame(width: 44, alignment: .trailing)
+                    }
+                    preview
+                }
+
+                card("TFT 증강체 등급표") {
+                    Text("증강체마다 S~D 를 직접 정해 두면 TFT 증강체 화면에 배지로 뜹니다.").font(.system(size: 12)).foregroundStyle(Theme.sub)
+                    Button("등급표 열기") { (NSApp.delegate as? App)?.openTiers() }
+                }
+
+                card("정보") {
+                    Text("버전 \(Updater.current ?? "개발용 실행")").foregroundStyle(Theme.sub)
+                    Button("업데이트 확인") { Task { await Updater.check(manual: true) } }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 640, alignment: .leading)
+        }
+    }
+
+    // 바꾼 값이 오버레이에서 어떻게 보이는지 미리 보기
+    var preview: some View {
+        VStack(alignment: .leading, spacing: 4 * scale) {
+            Text("말파이트 · top · 승률 52.0%").font(.system(size: 14 * scale, weight: .bold))
+            Text("핵심  태양불꽃 방패 → 가시 갑옷 → 얼어붙은 심장").font(.system(size: 12 * scale))
+        }
+        .foregroundStyle(.white)
+        .padding(10)
+        .background(.black.opacity(opacity), in: RoundedRectangle(cornerRadius: 8))
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(LinearGradient(colors: [.green.opacity(0.5), .brown.opacity(0.6)], startPoint: .top, endPoint: .bottom),
+                    in: RoundedRectangle(cornerRadius: 8))  // 게임 화면 대신 배경
+    }
+
+    func card<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.sub)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
     }
 }

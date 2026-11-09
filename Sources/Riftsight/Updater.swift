@@ -15,15 +15,19 @@ enum Updater {
         return false
     }
 
-    @MainActor static func check() async {
-        guard let cur = current else { return }  // swift run(앱 번들 아님)에서는 건너뜀
+    // manual: 설정 화면의 "업데이트 확인" 버튼 — 새 버전이 없어도 결과를 알려 줌
+    @MainActor static func check(manual: Bool = false) async {
+        func say(_ t: String) { if manual { let a = NSAlert(); a.messageText = t; a.runModal() } }
+        guard let cur = current else { return say("개발용 실행(swift run)에서는 업데이트를 확인하지 않아요") }
         var req = URLRequest(url: latest)
         req.setValue("Riftsight", forHTTPHeaderField: "User-Agent")
         guard let (d, _) = try? await URLSession.shared.data(for: req),
               let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-              let tag = (j["tag_name"] as? String)?.trimmingCharacters(in: CharacterSet(charactersIn: "v")),
-              newer(tag, than: cur),
-              let dmg = (j["assets"] as? [[String: Any]])?.first(where: { ($0["name"] as? String)?.hasSuffix(".dmg") == true })?["browser_download_url"] as? String,
+              let tag = (j["tag_name"] as? String)?.trimmingCharacters(in: CharacterSet(charactersIn: "v")) else {
+            return say("업데이트 정보를 받지 못했어요. 인터넷 연결을 확인해 주세요.")
+        }
+        guard newer(tag, than: cur) else { return say("최신 버전이에요 (\(cur))") }
+        guard let dmg = (j["assets"] as? [[String: Any]])?.first(where: { ($0["name"] as? String)?.hasSuffix(".dmg") == true })?["browser_download_url"] as? String,
               let url = URL(string: dmg) else { return }
 
         NSApp.activate(ignoringOtherApps: true)
