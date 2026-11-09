@@ -81,7 +81,10 @@ struct OverlayView: View {
         menu.items.prefix(2).forEach { $0.target = self }
         status.menu = menu
 
-        Task { await loop() }
+        Task {
+            await syncTiers()  // 시즌·패치로 증강체가 바뀌었으면 등급표를 맞춰 둠
+            await loop()
+        }
     }
 
     @objc func toggle() {
@@ -89,19 +92,24 @@ struct OverlayView: View {
         shown ? window.orderFrontRegardless() : window.orderOut(nil)
     }
 
-    // 등급표가 없으면 OP.GG 의 이번 시즌 증강체 이름을 채운 양식을 만들어 연다
     @objc func openTiers() {
         Task {
-            let f = AugmentOCR.tftFile
-            if !FileManager.default.fileExists(atPath: f.path) {
-                let augs = await OPGG.tftAugments().sorted { ($0.rarity, $0.name) < ($1.rarity, $1.name) }
-                let head = "# 맨 앞 ? 를 S·A·B·C·D 로 바꾸세요. ? 로 남긴 줄은 쓰지 않습니다. # 뒤는 메모.\n"
-                let body = augs.map { "? \($0.name)  # \($0.rarity)" }.joined(separator: "\n")
-                try? FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try? (head + body + "\n").write(to: f, atomically: true, encoding: .utf8)
-            }
-            NSWorkspace.shared.open(f)
+            await syncTiers()
+            NSWorkspace.shared.open(AugmentOCR.tftFile)
         }
+    }
+
+    // 등급표를 OP.GG 의 현재 증강체 목록에 맞춘다: 넣어 둔 등급은 유지, 새 증강체는 ?, 사라진 건 빼고 이전 파일은 .bak 로 남김
+    func syncTiers() async {
+        let augs = await OPGG.tftAugments()
+        guard !augs.isEmpty else { return }  // OP.GG 응답이 없으면 등급표를 건드리지 않음
+        let f = AugmentOCR.tftFile
+        let old = (try? String(contentsOf: f, encoding: .utf8)) ?? ""
+        let new = AugmentOCR.mergeTiers(old, augs)
+        guard new != old else { return }
+        try? FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !old.isEmpty { try? old.write(to: f.deletingPathExtension().appendingPathExtension("bak.txt"), atomically: true, encoding: .utf8) }
+        try? new.write(to: f, atomically: true, encoding: .utf8)
     }
 
     func loop() async {

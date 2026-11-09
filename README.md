@@ -20,7 +20,7 @@ swift run Riftsight --selftest  # 해석기·증강체 매칭 자체 점검
 처음 TFT 게임에서 맥이 **화면 기록** 권한을 물으면 허용한다(증강체 글자 읽기용). 롤은 **테두리 없는 창 모드**를 권장.
 
 ## TFT 증강체 등급표
-메뉴바 ◈ → **TFT 등급표 열기**. 처음 열면 OP.GG의 이번 시즌 증강체 이름이 `? 이름  # 희귀도` 꼴로 채워져 있다. 맨 앞 `?`를 S·A·B·C·D로 바꾸고 저장하면 다음 화면 읽기부터 바로 반영된다(다시 빌드 필요 없음).
-파일 위치: `~/Library/Application Support/Riftsight/tft_tiers.txt` — 시즌이 바뀌면 지우고 다시 열면 새 양식이 만들어진다.
+메뉴바 ◈ → **TFT 등급표 열기**. OP.GG의 현재 증강체 이름이 `? 이름  # 희귀도` 꼴로 채워져 있다. 맨 앞 `?`를 S·A·B·C·D로 바꾸고 저장하면 다음 화면 읽기부터 바로 반영된다(다시 빌드 필요 없음).
+파일 위치: `~/Library/Application Support/Riftsight/tft_tiers.txt`. 앱을 켤 때마다 OP.GG 목록에 맞춰 자동 갱신(넣은 등급 유지, 새 증강체는 `?`, 사라진 증강체는 빠지고 이전 파일은 `tft_tiers.bak.txt`로 백업).
 
 Riftsight는 Riot Games의 보증을 받지 않았으며 Riot Games의 견해를 대변하지 않습니다.

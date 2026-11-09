@@ -66,6 +66,13 @@ enum AugmentOCR {
         }
     }
 
+    static func mergeTiers(_ old: String, _ augs: [(name: String, rarity: String)]) -> String {
+        let grades = parseTiers(old)
+        let head = "# 맨 앞 ? 를 S·A·B·C·D 로 바꾸세요. ? 로 남긴 줄은 쓰지 않습니다. # 뒤는 메모.\n"
+        return head + augs.sorted { ($0.rarity, $0.name) < ($1.rarity, $1.name) }
+            .map { "\(grades[$0.name]?.tier ?? "?") \($0.name)  # \($0.rarity)" }.joined(separator: "\n") + "\n"
+    }
+
     static func selfTest() {
         // 등급표 없이 매칭 규칙만 확인
         let k = keyed(["대출 선지급": Entry(tier: "A", note: ""), "초월": Entry(tier: "S", note: "")])
@@ -76,6 +83,9 @@ enum AugmentOCR {
         assert(m("초월적인 힘") == nil, "2글자 이름은 정확히 같을 때만")
         let p = parseTiers("# 메모\nS 대출 선지급  # 골드\n? 초월\na 빛나는 별\nX 엉뚱\n")
         assert(p.count == 2 && p["대출 선지급"]?.tier == "S" && p["빛나는 별"]?.tier == "A", "parseTiers")
+        let m = mergeTiers("S 대출 선지급\nA 사라진 증강체\n", [("대출 선지급", "골드"), ("새 증강체", "실버")])
+        assert(m.contains("S 대출 선지급  # 골드") && m.contains("? 새 증강체  # 실버") && !m.contains("사라진"), "mergeTiers")
+        assert(mergeTiers(m, [("대출 선지급", "골드"), ("새 증강체", "실버")]) == m, "같은 목록이면 그대로")
         print("AugmentOCR.match self-test OK")
     }
 }
