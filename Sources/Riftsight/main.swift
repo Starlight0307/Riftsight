@@ -30,7 +30,7 @@ enum Pref {
     let model = Model()
     var window: NSWindow!
     var mainWindow: NSWindow?
-    var panel: NSPanel!          // 정보 창들. 클릭·끌기를 받는 작은 창 (전체 화면 층은 클릭 통과)
+    var panels: [String: NSPanel] = [:]  // 정보 창마다 클릭·끌기를 받는 작은 창 (전체 화면 층은 클릭 통과)
     var dragOffset: CGPoint?
     var status: NSStatusItem!
     var shown: Bool { UserDefaults.standard.bool(forKey: "overlayOn") }
@@ -55,20 +55,24 @@ enum Pref {
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.contentView = NSHostingView(rootView: OverlayView(model: model))
 
-        // 눌러도 게임 창이 뒤로 가지 않도록 앞으로 나오지 않는(nonactivating) 창
-        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.level = window.level
-        panel.collectionBehavior = window.collectionBehavior
-        let host = NSHostingController(rootView: PanelsView(model: model))
-        host.sizingOptions = .preferredContentSize  // 창 크기가 내용을 따라감
-        panel.contentViewController = host
-        panel.delegate = self
-        panel.setFrameTopLeftPoint(panelTopLeft)
+        for kind in PanelsView.kinds {
+            // 눌러도 게임 창이 뒤로 가지 않도록 앞으로 나오지 않는(nonactivating) 창
+            let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            p.isOpaque = false
+            p.backgroundColor = .clear
+            p.hasShadow = false
+            p.hidesOnDeactivate = false
+            p.becomesKeyOnlyIfNeeded = true
+            p.level = window.level
+            p.collectionBehavior = window.collectionBehavior
+            let host = NSHostingController(rootView: PanelsView(model: model, kind: kind))
+            host.sizingOptions = .preferredContentSize  // 창 크기가 내용을 따라감
+            p.contentViewController = host
+            p.identifier = NSUserInterfaceItemIdentifier(kind)
+            p.delegate = self
+            p.setFrameTopLeftPoint(topLeft(kind))
+            panels[kind] = p
+        }
         applyShown()
 
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -110,36 +114,43 @@ enum Pref {
         mainWindow?.makeKeyAndOrderFront(nil)
     }
 
-    // 정보 창 왼쪽 위 위치 (저장값, 없으면 화면 왼쪽 위에서 게임 상단 정보를 피한 자리)
-    var panelTopLeft: CGPoint {
+    // 정보 창 왼쪽 위 위치 (저장값, 없으면 화면 왼쪽 위부터 옆으로 나란히, 게임 상단 정보를 피한 높이)
+    func topLeft(_ kind: String) -> CGPoint {
         let d = UserDefaults.standard
-        if d.object(forKey: "panelX") != nil { return CGPoint(x: d.double(forKey: "panelX"), y: d.double(forKey: "panelY")) }
+        if d.object(forKey: "panel.\(kind).x") != nil { return CGPoint(x: d.double(forKey: "panel.\(kind).x"), y: d.double(forKey: "panel.\(kind).y")) }
         let f = NSScreen.screens.first?.frame ?? .zero
-        return CGPoint(x: f.minX + 16, y: f.maxY - 90)
+        let column = ["build": 0, "tft": 0, "gold": 1, "lines": 1, "info": 2, "settings": 3][kind] ?? 0
+        return CGPoint(x: f.minX + 16 + CGFloat(column) * 320 * d.double(forKey: "scale"), y: f.maxY - 90)
     }
 
-    func dragPanel() {
+    func dragPanel(_ kind: String) {
+        guard let p = panels[kind] else { return }
         let m = NSEvent.mouseLocation
-        if dragOffset == nil { dragOffset = CGPoint(x: m.x - panel.frame.minX, y: m.y - panel.frame.maxY) }
+        if dragOffset == nil { dragOffset = CGPoint(x: m.x - p.frame.minX, y: m.y - p.frame.maxY) }
         guard let o = dragOffset else { return }
-        panel.setFrameTopLeftPoint(CGPoint(x: m.x - o.x, y: m.y - o.y))
+        p.setFrameTopLeftPoint(CGPoint(x: m.x - o.x, y: m.y - o.y))
     }
 
-    func endPanelDrag() {
+    func endPanelDrag(_ kind: String) {
         dragOffset = nil
-        UserDefaults.standard.set(panel.frame.minX, forKey: "panelX")
-        UserDefaults.standard.set(panel.frame.maxY, forKey: "panelY")
+        guard let p = panels[kind] else { return }
+        UserDefaults.standard.set(p.frame.minX, forKey: "panel.\(kind).x")
+        UserDefaults.standard.set(p.frame.maxY, forKey: "panel.\(kind).y")
     }
 
     @objc func resetPanelPosition() {
-        UserDefaults.standard.removeObject(forKey: "panelX")
-        UserDefaults.standard.removeObject(forKey: "panelY")
-        panel.setFrameTopLeftPoint(panelTopLeft)
+        for (kind, p) in panels {
+            UserDefaults.standard.removeObject(forKey: "panel.\(kind).x")
+            UserDefaults.standard.removeObject(forKey: "panel.\(kind).y")
+            p.setFrameTopLeftPoint(topLeft(kind))
+        }
     }
 
     // 내용이 늘거나 줄면 아래 모서리 기준으로 바뀌므로 왼쪽 위를 다시 맞춘다
     func windowDidResize(_ n: Notification) {
-        if (n.object as? NSWindow) === panel, dragOffset == nil { panel.setFrameTopLeftPoint(panelTopLeft) }
+        if let p = n.object as? NSPanel, let kind = p.identifier?.rawValue, panels[kind] === p, dragOffset == nil {
+            p.setFrameTopLeftPoint(topLeft(kind))
+        }
     }
 
     func windowWillClose(_ n: Notification) {
@@ -161,7 +172,7 @@ enum Pref {
         // 켤 때 화면 크기에 묶이지 않도록 지금 주 모니터(메뉴 막대 있는 쪽)에 맞춤
         if let f = NSScreen.screens.first?.frame, window.frame != f { window.setFrame(f, display: false) }
         if shown != window.isVisible { shown ? window.orderFrontRegardless() : window.orderOut(nil) }
-        if shown != panel.isVisible { shown ? panel.orderFrontRegardless() : panel.orderOut(nil) }
+        for p in panels.values where shown != p.isVisible { shown ? p.orderFrontRegardless() : p.orderOut(nil) }
     }
 
     @objc func openTiers() {
