@@ -203,13 +203,14 @@ enum OPGG {
             if depth == 0 { end = i; break }
         }
         guard depth == 0, let list = try? JSONSerialization.jsonObject(with: Data(("[" + text[start..<end] + "]").utf8)) as? [[String: Any]] else { return [:] }
-        var best: [Int: (play: Int, units: [TFTBoard.Unit])] = [:]
+        var best: [Int: (play: Int, stage: (units: [TFTBoard.Unit], traits: [TFTBoard.Trait]))] = [:]
         for b in list {
             guard let l = b["level"] as? Int, let units = b["units"] as? [[String: Any]] else { continue }
             let play = b["play"] as? Int ?? 0
-            if play > best[l]?.play ?? -1 { best[l] = (play, units.compactMap(TFTBoard.unit)) }
+            let traits = (b["traits"] as? [[String: Any]] ?? []).compactMap(TFTBoard.trait)
+            if play > best[l]?.play ?? -1 { best[l] = (play, (units.compactMap(TFTBoard.unit), traits)) }
         }
-        return best.mapValues(\.units)
+        return best.mapValues(\.stage)
     }
 
     // TFT 메타 덱 상위 5개
@@ -300,9 +301,12 @@ enum OPGG {
         assert(near.lines == ["내 시너지  엉뚱, 햇빛", "가까운 덱  햇빛 유나라 (시너지 1/2) · 핵심 유나라"], "closestDecks")
         assert((near.best?["name"] as? [String: Any])?["ko_KR"] as? String == "햇빛 유나라", "closest best")
         assert(closestDecks(seen: [], decks: decks, name: { names[$0] }).lines.isEmpty)
-        let page = #"x self.__next_f.push([1,"{\"buildUp\":[{\"level\":4,\"play\":5,\"units\":[{\"key\":\"A\",\"star\":2,\"cell\":{\"x\":1,\"y\":2},\"items\":[],\"name\":\"[괄호]\"}]},{\"level\":4,\"play\":9,\"units\":[{\"key\":\"B\",\"star\":1,\"cell\":{\"x\":3,\"y\":4},\"items\":[\"I\"]}]}],\"x\":1}"])"#
+        let page = #"x self.__next_f.push([1,"{\"buildUp\":[{\"level\":4,\"play\":5,\"units\":[{\"key\":\"A\",\"star\":2,\"cell\":{\"x\":1,\"y\":2},\"items\":[],\"name\":\"[괄호]\"}]},{\"level\":4,\"play\":9,\"units\":[{\"key\":\"B\",\"star\":1,\"cell\":{\"x\":3,\"y\":4},\"items\":[\"I\"]}],\"traits\":[{\"key\":\"T\",\"count\":3,\"style\":2}]}],\"x\":1}"])"#
         let bu = parseBuildUp(page)
-        assert(bu.count == 1 && bu[4]?.first?.key == "B" && bu[4]?.first?.items == ["I"] && bu[4]?.first?.x == 3, "parseBuildUp \(bu)")
+        assert(bu.count == 1 && bu[4]?.units.first?.key == "B" && bu[4]?.units.first?.items == ["I"] && bu[4]?.units.first?.x == 3, "parseBuildUp")
+        assert(bu[4]?.traits.first?.count == 3 && bu[4]?.traits.first?.style == 2, "parseBuildUp traits")
+        let deck: [String: Any] = ["traits": [["key": "A", "numUnits": 2, "style": 1], ["key": "B", "numUnits": 3, "style": 3], ["key": "C", "numUnits": 1, "style": 0]]]
+        assert(TFTBoard.traits(deck, stage: "final").map(\.key) == ["B", "A"], "traits order")
         assert(blurb("S", popular: true) == "성능과 선호도가 모두 좋음" && blurb("B", popular: true) == "자주 고르는 무난한 픽"
                && blurb("D", popular: true) == "성적이 낮은 편" && blurb("C", popular: false) == "안정적인 선택", "blurb")
         let d = (parse(sample) as? [String: Any])?["data"] as? [String: Any]

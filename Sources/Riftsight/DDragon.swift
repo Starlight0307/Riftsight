@@ -72,6 +72,8 @@ import Foundation
     private var tftIcons: [String: URL] = [:]
     private(set) var tftCost: [String: Int] = [:]      // TFT 유닛 키 → 코스트(테두리 색)
     private(set) var tftItems: [String: (name: String, icon: URL?)] = [:]  // TFT 아이템 키(DA_BlueBuff) → 한글 이름·아이콘
+    private var tftTraitIcons: [String: URL] = [:]
+    func tftTraitIcon(_ key: String) -> URL? { tftTraitIcons[key] }
     private(set) var tftNames: [String: String] = [:]  // TFT 유닛·시너지 키(DA_18_Solar) → 한글 이름(햇빛)
     private(set) var tftTraits: [String: String] = [:] // 공백 뺀 한글 시너지 이름 → 키 (화면 글자와 맞추기용)
     func tftUnit(_ key: String) -> URL? { tftIcons[key] }
@@ -102,6 +104,7 @@ import Foundation
         for set in sets.sorted(by: { (Int($0.key) ?? 0) < (Int($1.key) ?? 0) }).map(\.value) {
             for t in set["traits"] as? [[String: Any]] ?? [] {
                 if let k = t["apiName"] as? String, let n = t["name"] as? String { tftNames[k] = n; tftTraits[AugmentOCR.norm(n)] = k }
+                if let k = t["apiName"] as? String, let ic = t["icon"] as? String { tftTraitIcons[k] = png(ic) }
             }
             for c in set["champions"] as? [[String: Any]] ?? [] {
                 if let k = c["apiName"] as? String, let n = c["name"] as? String { tftNames[k] = n; tftCost[k] = c["cost"] as? Int }

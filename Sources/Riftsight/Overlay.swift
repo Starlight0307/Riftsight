@@ -50,6 +50,7 @@ struct OverlayView: View {
                                         Spacer()
                                         Text(TFTBoard.label(t.stage)).font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(OV.teal)
                                     }
+                                    TraitRow(traits: t.traits, size: 20 * scale)
                                     TFTBoard(units: t.units, cell: 30 * scale)
                                 }
                             }
@@ -331,7 +332,22 @@ struct AugmentBand: View {
 // 단계 = 레벨 4~10(OP.GG 웹 빌드업, 있으면) 또는 레벨 5(early)·7(middle), 그리고 최종(units, 아이템 포함)
 struct TFTBoard: View {
     struct Unit { let key: String, x: Int, y: Int, items: [String], stars: Int; var icon: URL? = nil, cost: Int? = nil }
-    typealias BuildUp = [Int: [Unit]]
+    // 시너지: 공식 자료는 numUnits, 웹 빌드업은 count·imageUrl. style 0 비활성·1 브론즈·2 실버·3 골드·4 이상 프리즘
+    struct Trait { let key: String, count: Int, style: Int; var icon: URL? = nil }
+    typealias BuildUp = [Int: (units: [Unit], traits: [Trait])]
+
+    static func trait(_ t: [String: Any]) -> Trait? {
+        guard let k = t["key"] as? String else { return nil }
+        return Trait(key: k, count: (t["count"] ?? t["numUnits"]) as? Int ?? 0, style: t["style"] as? Int ?? 0, icon: (t["imageUrl"] as? String).flatMap(URL.init))
+    }
+
+    // 켜진 시너지만, 높은 단계·많은 개수 순
+    static func traits(_ deck: [String: Any], stage: String, buildUp: BuildUp? = nil) -> [Trait] {
+        let all: [Trait]
+        if let l = Int(stage) { all = buildUp?[l]?.traits ?? [] }
+        else { all = ((stage == "final" ? deck["traits"] : (deck[stage] as? [String: Any])?["traits"]) as? [[String: Any]] ?? []).compactMap(trait) }
+        return all.filter { $0.style > 0 }.sorted { ($0.style, $0.count) > ($1.style, $1.count) }
+    }
 
     static func label(_ stage: String) -> String { Int(stage).map { "Lv.\($0)" } ?? ["early": "레벨 5", "middle": "레벨 7", "final": "최종"][stage] ?? stage }
 
@@ -349,7 +365,7 @@ struct TFTBoard: View {
     }
 
     static func units(_ deck: [String: Any], stage: String, buildUp: BuildUp? = nil) -> [Unit] {
-        if let l = Int(stage) { return buildUp?[l] ?? [] }
+        if let l = Int(stage) { return buildUp?[l]?.units ?? [] }
         let list = stage == "final" ? deck["units"] as? [[String: Any]] : (deck[stage] as? [String: Any])?["units"] as? [[String: Any]]
         return (list ?? []).compactMap(unit)
     }
@@ -411,6 +427,36 @@ struct TFTBoard: View {
             }
         }
         .frame(width: cell, height: cell)
+    }
+}
+
+// 시너지 줄: 단계 색 육각형 안에 아이콘 + 개수 (names 면 이름도)
+struct TraitRow: View {
+    let traits: [TFTBoard.Trait]
+    var size: CGFloat = 24
+    var names = false
+    @ObservedObject private var dd = DDragon.shared
+
+    static func color(_ style: Int) -> Color {
+        [1: Color(red: 0.72, green: 0.45, blue: 0.27), 2: Color(white: 0.72), 3: Color(red: 0.95, green: 0.75, blue: 0.25)][style]
+            ?? Color(red: 0.75, green: 0.5, blue: 1)
+    }
+
+    var body: some View {
+        HStack(spacing: size * 0.3) {
+            ForEach(Array(traits.enumerated()), id: \.offset) { _, t in
+                HStack(spacing: size * 0.15) {
+                    ZStack {
+                        Hex().fill(Self.color(t.style))
+                        AsyncImage(url: t.icon ?? dd.tftTraitIcon(t.key)) { $0.resizable().renderingMode(.template) } placeholder: { Color.clear }
+                            .foregroundStyle(.black.opacity(0.85)).frame(width: size * 0.62, height: size * 0.62)
+                    }.frame(width: size, height: size)
+                    Text(names ? "\(dd.tftNames[t.key] ?? t.key) \(t.count)" : "\(t.count)")
+                        .font(.system(size: size * 0.45, weight: .bold)).fixedSize()
+                }
+            }
+        }
+        .fixedSize()  // 좁은 칸에서 개수 숫자가 눌려 사라지지 않게
     }
 }
 

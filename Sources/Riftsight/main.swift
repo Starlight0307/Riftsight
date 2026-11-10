@@ -15,7 +15,7 @@ if CommandLine.arguments.contains("--selftest") {
     @Published var card: BuildPanel.Info?  // 롤 빌드가 있으면 글줄 대신 빌드·골드·정보 창으로
     @Published var gold: League.Gold?
     @Published var info: [String] = []     // 게임 정보 창 줄(회복·억제기·피해 유형)
-    @Published var tftDeck: (name: String, stage: String, units: [TFTBoard.Unit], deck: [String: Any])?  // TFT 덱 정보 창 배치도
+    @Published var tftDeck: (name: String, stage: String, units: [TFTBoard.Unit], traits: [TFTBoard.Trait], deck: [String: Any])?  // TFT 덱 정보 창 배치도
 }
 
 // 설정 화면(SettingsView)과 오버레이가 함께 쓰는 값. UserDefaults 에 저장돼 다시 켜도 유지
@@ -160,7 +160,7 @@ enum Pref {
                 if let deck = advice.best ?? rawDecks?.first {
                     let bu = await OPGG.buildUp(deckId: deck["id"] as? String ?? "")
                     let stage = TFTBoard.stage(forLevel: (g.all["activePlayer"] as? [String: Any])?["level"] as? Int, buildUp: bu)
-                    model.tftDeck = ((deck["name"] as? [String: Any])?["ko_KR"] as? String ?? "?", stage, TFTBoard.units(deck, stage: stage, buildUp: bu), deck)
+                    model.tftDeck = ((deck["name"] as? [String: Any])?["ko_KR"] as? String ?? "?", stage, TFTBoard.units(deck, stage: stage, buildUp: bu), TFTBoard.traits(deck, stage: stage, buildUp: bu), deck)
                 }
                 model.augments = AugmentOCR.hits(AugmentOCR.tft(), lines)
             } else {

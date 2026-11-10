@@ -298,6 +298,7 @@ struct TFTView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text((d["name"] as? [String: Any])?["ko_KR"] as? String ?? "?").font(.system(size: 15, weight: .bold))
                 DeckBadges(deck: d)
+                TraitRow(traits: TFTBoard.traits(d, stage: "final"), size: 22)
                 HStack(spacing: 4) {
                     ForEach(Array(units.enumerated()), id: \.offset) { _, u in
                         let key = u["key"] as? String ?? ""
@@ -340,6 +341,7 @@ extension TFTView {
                             .background(store.deckStage == key ? OV.teal.opacity(0.12) : Theme.line, in: RoundedRectangle(cornerRadius: 6))
                     }
                 }
+                TraitRow(traits: TFTBoard.traits(d, stage: store.deckStage, buildUp: bu), size: 24, names: true)
                 if units.isEmpty { Text("이 단계 배치 정보가 없어요").foregroundStyle(Theme.sub) }
                 else { TFTBoard(units: units, cell: 48) }
             }
