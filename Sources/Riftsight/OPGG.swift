@@ -101,6 +101,38 @@ enum OPGG {
         return graded.merging(rest) { a, _ in a }
     }
 
+    // 아수라장(KIWI) 증강체 등급: 공식 창구에 없어 OP.GG 웹 챔피언 아수라장 증강체 페이지를 읽는다 (비공식).
+    // 등급은 글자가 아니라 S·A·B·C·D·E 모양 그림이라 그림 경로 앞부분으로 구분. 못 읽으면 빈 값 → 무작위 총력전 자료로 대체
+    static func mayhemAugments(key: String) async -> [String: AugmentOCR.Entry] {
+        var req = URLRequest(url: URL(string: "https://op.gg/ko/lol/modes/aram-mayhem/\(key.lowercased())/augments")!)
+        req.setValue("Mozilla/5.0 (Macintosh)", forHTTPHeaderField: "User-Agent")
+        guard let (d, r) = try? await URLSession.shared.data(for: req), (r as? HTTPURLResponse)?.statusCode == 200,
+              let html = String(data: d, encoding: .utf8) else { return [:] }
+        let grades = parseMayhem(html)
+        guard !grades.isEmpty else { return [:] }
+        let rarity = await rarities()
+        let graded = grades.reduce(into: [String: AugmentOCR.Entry]()) { out, g in
+            out[g.key] = AugmentOCR.Entry(tier: g.value, note: rarity[g.key]?.rarity ?? "", icon: rarity[g.key]?.icon)
+        }
+        let rest = rarity.filter { graded[$0.key] == nil }.mapValues { AugmentOCR.Entry(tier: "자료 없음", note: $0.rarity, blurb: "통계 부족", icon: $0.icon) }
+        return graded.merging(rest) { a, _ in a }
+    }
+
+    static let mayhemGlyphs = [("M15 6.5v1.75", "S"), ("M13 15h2V6.5", "A"), ("M13.5 5H9v10", "B"),
+                               ("M15 6.5 13.5 5", "C"), ("M9 5h4.5L15 6.5", "D"), ("M15 7V5H9v10", "E")]
+    static func parseMayhem(_ html: String) -> [String: String] {
+        var out: [String: String] = [:]
+        // 증강체 한 줄 = <li class="flex w-full items-center gap-4 border-t ..."> … </li>
+        for li in html.components(separatedBy: "<li class=\"flex w-full items-center gap-4 border-t").dropFirst() {
+            let row = li.components(separatedBy: "</li>").first ?? ""
+            guard let alt = row.components(separatedBy: "alt=\"").dropFirst().first?.components(separatedBy: "\"").first,
+                  let path = row.components(separatedBy: "<path fill=\"#fff\"").dropFirst().first?.components(separatedBy: "d=\"").dropFirst().first,
+                  let grade = mayhemGlyphs.first(where: { path.hasPrefix($0.0) })?.1 else { continue }
+            out[alt.replacingOccurrences(of: "&amp;", with: "&")] = grade
+        }
+        return out
+    }
+
     // 등급(성능)과 선호도(이 챔피언 안 중앙값 이상인지)로 한 줄 평
     static func blurb(_ grade: String, popular: Bool) -> String {
         switch (["S", "A"].contains(grade), grade == "D", popular) {
@@ -311,6 +343,9 @@ enum OPGG {
             ["name": ["ko_KR": "다른 덱"], "traits": [["key": "Z", "style": 2]], "units": []],
         ]
         let names = ["S": "햇빛", "E": "처형자", "X": "엉뚱", "U": "유나라"]
+        let li = ##"<li class="flex w-full items-center gap-4 border-t x"><img alt="전환: 혼돈" src="a"/><svg><path fill="#EB9C00" d="M2 0h20"></path><path fill="#fff" fill-rule="evenodd" d="M13 15h2V6.5L13.5 5z"></path></svg></li>"##
+        assert(parseMayhem("<ul>" + li + li.replacingOccurrences(of: "전환: 혼돈", with: "되풀이").replacingOccurrences(of: "M13 15h2V6.5", with: "M15 7V5H9v10") + "</ul>")
+               == ["전환: 혼돈": "A", "되풀이": "E"], "parseMayhem")
         let blocks = itemBlocks(["starter_items": ["ids": [1055.0]], "core_items": ["ids": [3031.0], "play": 10.0, "win": 6.0, "pick_rate": 0.2],
                                  "fourth_items": [["ids": [3036.0]], ["ids": [3036.0]], ["ids": [3072.0]]]])
         assert(blocks.map(\.title) == ["시작 아이템", "핵심 아이템 · 승률 60.0% · 픽률 20.0%", "4번째 아이템 후보"] && blocks[2].ids == [3036, 3072], "itemBlocks")

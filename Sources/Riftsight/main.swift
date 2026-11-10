@@ -234,7 +234,7 @@ enum Pref {
                 (model.gold, model.info) = League.info(g.all, item: { dd.itemInfo[$0] }, champ: { dd.champInfo[$0] })
                 // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만
                 model.augments = scanAugments && g.mode != "CLASSIC"
-                    ? await AugmentOCR.scan(await lolAugments(g.key), excluding: CGWindowID(window.windowNumber)) : []
+                    ? await AugmentOCR.scan(await lolAugments(g.key, mode: g.mode), excluding: CGWindowID(window.windowNumber)) : []
             }
         } else if let l = await League.loading() {
             let dd = DDragon.shared
@@ -270,12 +270,17 @@ enum Pref {
         }
     }
 
-    func lolAugments(_ key: String) async -> AugmentOCR.Keyed {
-        if let hit = lolAugCache[key] { return hit }
-        if champIds.isEmpty { champIds = await OPGG.championIds() }
-        guard let id = champIds[key] else { return [:] }
-        let table = AugmentOCR.keyed(await OPGG.lolAugments(championId: id))
-        if !table.isEmpty { lolAugCache[key] = table }
+    // 아수라장(KIWI)은 OP.GG 웹 아수라장 등급, 못 읽거나 다른 모드면 공식 무작위 총력전 성적
+    func lolAugments(_ key: String, mode: String) async -> AugmentOCR.Keyed {
+        if let hit = lolAugCache[key + mode] { return hit }
+        var raw = mode == "KIWI" ? await OPGG.mayhemAugments(key: key) : [:]
+        if raw.isEmpty {
+            if champIds.isEmpty { champIds = await OPGG.championIds() }
+            guard let id = champIds[key] else { return [:] }
+            raw = await OPGG.lolAugments(championId: id)
+        }
+        let table = AugmentOCR.keyed(raw)
+        if !table.isEmpty { lolAugCache[key + mode] = table }
         return table
     }
 
