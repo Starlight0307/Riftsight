@@ -174,6 +174,44 @@ enum OPGG {
         }, scored.first?.deck)
     }
 
+    // 덱 레벨별(4~10) 배치: 공식 창구에 없어 OP.GG 웹 덱 상세 페이지 안의 "buildUp" 자료를 읽는다 (비공식).
+    // 레벨마다 가장 많이 쓰인 배치. 페이지 구조가 바뀌면 빈 값 → 공식 레벨 5·7·최종으로 돌아감
+    static var buildUpCache: [String: TFTBoard.BuildUp] = [:]
+    static func buildUp(deckId: String) async -> TFTBoard.BuildUp {
+        if let hit = buildUpCache[deckId] { return hit }
+        var req = URLRequest(url: URL(string: "https://op.gg/ko/tft/meta-trends/comps/\(deckId)")!)
+        req.setValue("Mozilla/5.0 (Macintosh)", forHTTPHeaderField: "User-Agent")
+        guard let (d, _) = try? await URLSession.shared.data(for: req), let html = String(data: d, encoding: .utf8) else { return [:] }
+        let b = parseBuildUp(html)
+        if !b.isEmpty { buildUpCache[deckId] = b }
+        return b
+    }
+
+    static func parseBuildUp(_ html: String) -> TFTBoard.BuildUp {
+        // 페이지 스크립트 안 JSON 은 \" 로 감싸져 있음
+        let text = html.replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\")
+        guard let start = text.range(of: "\"buildUp\":[")?.upperBound else { return [:] }
+        // 짝 맞는 ] 까지 (문자열 안 괄호는 건너뜀)
+        var depth = 1, inString = false, escaped = false, end = start
+        for i in text[start...].indices {
+            let c = text[i]
+            if escaped { escaped = false; continue }
+            if c == "\\" { escaped = true; continue }
+            if c == "\"" { inString.toggle(); continue }
+            if inString { continue }
+            if c == "[" || c == "{" { depth += 1 } else if c == "]" || c == "}" { depth -= 1 }
+            if depth == 0 { end = i; break }
+        }
+        guard depth == 0, let list = try? JSONSerialization.jsonObject(with: Data(("[" + text[start..<end] + "]").utf8)) as? [[String: Any]] else { return [:] }
+        var best: [Int: (play: Int, units: [TFTBoard.Unit])] = [:]
+        for b in list {
+            guard let l = b["level"] as? Int, let units = b["units"] as? [[String: Any]] else { continue }
+            let play = b["play"] as? Int ?? 0
+            if play > best[l]?.play ?? -1 { best[l] = (play, units.compactMap(TFTBoard.unit)) }
+        }
+        return best.mapValues(\.units)
+    }
+
     // TFT 메타 덱 상위 5개
     static func metaDecks() async -> [String] {
         let decks = await rawMetaDecks()
@@ -262,6 +300,9 @@ enum OPGG {
         assert(near.lines == ["내 시너지  엉뚱, 햇빛", "가까운 덱  햇빛 유나라 (시너지 1/2) · 핵심 유나라"], "closestDecks")
         assert((near.best?["name"] as? [String: Any])?["ko_KR"] as? String == "햇빛 유나라", "closest best")
         assert(closestDecks(seen: [], decks: decks, name: { names[$0] }).lines.isEmpty)
+        let page = #"x self.__next_f.push([1,"{\"buildUp\":[{\"level\":4,\"play\":5,\"units\":[{\"key\":\"A\",\"star\":2,\"cell\":{\"x\":1,\"y\":2},\"items\":[],\"name\":\"[괄호]\"}]},{\"level\":4,\"play\":9,\"units\":[{\"key\":\"B\",\"star\":1,\"cell\":{\"x\":3,\"y\":4},\"items\":[\"I\"]}]}],\"x\":1}"])"#
+        let bu = parseBuildUp(page)
+        assert(bu.count == 1 && bu[4]?.first?.key == "B" && bu[4]?.first?.items == ["I"] && bu[4]?.first?.x == 3, "parseBuildUp \(bu)")
         assert(blurb("S", popular: true) == "성능과 선호도가 모두 좋음" && blurb("B", popular: true) == "자주 고르는 무난한 픽"
                && blurb("D", popular: true) == "성적이 낮은 편" && blurb("C", popular: false) == "안정적인 선택", "blurb")
         let d = (parse(sample) as? [String: Any])?["data"] as? [String: Any]

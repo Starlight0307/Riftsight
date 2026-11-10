@@ -48,7 +48,7 @@ struct OverlayView: View {
                                             DeckBadges(deck: t.deck, scale: scale)
                                         }
                                         Spacer()
-                                        Text(TFTBoard.stages.first { $0.0 == t.stage }?.1 ?? "").font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(OV.teal)
+                                        Text(TFTBoard.label(t.stage)).font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(OV.teal)
                                     }
                                     TFTBoard(units: t.units, cell: 30 * scale)
                                 }
@@ -327,18 +327,31 @@ struct AugmentBand: View {
     }
 }
 
-// TFT 덱 배치도: 4줄 × 7칸 육각 보드. 단계 = 레벨 5(early)·7(middle)·최종(units, 아이템 포함)
+// TFT 덱 배치도: 4줄 × 7칸 육각 보드.
+// 단계 = 레벨 4~10(OP.GG 웹 빌드업, 있으면) 또는 레벨 5(early)·7(middle), 그리고 최종(units, 아이템 포함)
 struct TFTBoard: View {
-    struct Unit { let key: String, x: Int, y: Int, items: [String], stars: Int }
-    static let stages = [("early", "레벨 5"), ("middle", "레벨 7"), ("final", "최종")]
+    struct Unit { let key: String, x: Int, y: Int, items: [String], stars: Int; var icon: URL? = nil, cost: Int? = nil }
+    typealias BuildUp = [Int: [Unit]]
 
-    // OP.GG 덱에서 단계별 유닛. 초·중반은 characterId, 최종은 key 에 들어 있음
-    static func units(_ deck: [String: Any], stage: String) -> [Unit] {
+    static func label(_ stage: String) -> String { Int(stage).map { "Lv.\($0)" } ?? ["early": "레벨 5", "middle": "레벨 7", "final": "최종"][stage] ?? stage }
+
+    static func stages(_ b: BuildUp?) -> [(String, String)] {
+        guard let b, !b.isEmpty else { return [("early", "레벨 5"), ("middle", "레벨 7"), ("final", "최종")] }
+        return b.keys.sorted().map { ("\($0)", "Lv.\($0)") } + [("final", "최종")]
+    }
+
+    // OP.GG 유닛 하나. 공식 자료는 key·tier, 초·중반은 characterId, 웹 빌드업은 key·star·imageUrl
+    static func unit(_ u: [String: Any]) -> Unit? {
+        guard let k = (u["key"] ?? u["characterId"]) as? String, let c = u["cell"] as? [String: Any],
+              let x = c["x"] as? Int, let y = c["y"] as? Int else { return nil }
+        return Unit(key: k, x: x, y: y, items: (u["items"] as? [Any] ?? []).compactMap { $0 as? String },
+                    stars: (u["tier"] ?? u["star"]) as? Int ?? 0, icon: (u["imageUrl"] as? String).flatMap(URL.init), cost: u["cost"] as? Int)
+    }
+
+    static func units(_ deck: [String: Any], stage: String, buildUp: BuildUp? = nil) -> [Unit] {
+        if let l = Int(stage) { return buildUp?[l] ?? [] }
         let list = stage == "final" ? deck["units"] as? [[String: Any]] : (deck[stage] as? [String: Any])?["units"] as? [[String: Any]]
-        return (list ?? []).compactMap { u in
-            guard let k = (u["key"] ?? u["characterId"]) as? String, let c = u["cell"] as? [String: Int], let x = c["x"], let y = c["y"] else { return nil }
-            return Unit(key: k, x: x, y: y, items: (u["items"] as? [Any] ?? []).compactMap { $0 as? String }, stars: u["tier"] as? Int ?? 0)
-        }
+        return (list ?? []).compactMap(unit)
     }
 
     // 덱 이름 밑 표시: 난이도(1 쉬움·2 보통·3 어려움), 리롤 레벨(⟳ Lv 8)
@@ -351,8 +364,9 @@ struct TFTBoard: View {
     }
 
     // 지금 레벨에 맞는 단계 (오버레이는 눌러 고를 수 없어서)
-    static func stage(forLevel l: Int?) -> String {
+    static func stage(forLevel l: Int?, buildUp: BuildUp? = nil) -> String {
         guard let l else { return "final" }
+        if let b = buildUp, let lv = b.keys.sorted().last(where: { $0 <= max(l, b.keys.min() ?? l) }) { return "\(lv)" }
         return l <= 5 ? "early" : l <= 7 ? "middle" : "final"
     }
 
@@ -368,11 +382,12 @@ struct TFTBoard: View {
     var body: some View {
         let gap = cell * 0.12, rowH = cell * 1.32
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(1...4, id: \.self) { y in
+            // OP.GG 좌표는 y=1 이 맨 아래(내 쪽) 줄, 홀수 줄이 반 칸 밀림 (OP.GG 앱 배치표와 같은 모양)
+            ForEach([4, 3, 2, 1], id: \.self) { y in
                 HStack(spacing: gap) {
                     ForEach(1...7, id: \.self) { x in slot(units.first { $0.x == x && $0.y == y }) }
                 }
-                .padding(.leading, y % 2 == 0 ? (cell + gap) / 2 : 0)  // 짝수 줄은 반 칸 밀어 육각 배치
+                .padding(.leading, y % 2 == 1 ? (cell + gap) / 2 : 0)
                 .frame(height: rowH, alignment: .top)
             }
         }
@@ -382,9 +397,9 @@ struct TFTBoard: View {
         ZStack(alignment: .bottom) {
             Hex().fill(OV.box).overlay(Hex().stroke(OV.stroke))
             if let u {
-                Icon(url: dd.tftUnit(u.key), size: cell * 0.86)
+                Icon(url: u.icon ?? dd.tftUnit(u.key), size: cell * 0.86)
                     .clipShape(Hex())
-                    .overlay(Hex().stroke(Self.costColor(dd.tftCost[u.key]), lineWidth: 2))
+                    .overlay(Hex().stroke(Self.costColor(u.cost ?? dd.tftCost[u.key]), lineWidth: 2))
                     .frame(maxHeight: .infinity, alignment: .center)
                 if u.stars > 1 {
                     Text(String(repeating: "★", count: u.stars)).font(.system(size: cell * 0.2)).foregroundStyle(.yellow)

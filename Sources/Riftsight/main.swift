@@ -158,8 +158,9 @@ enum Pref {
                 model.lines = advice.lines.isEmpty ? (decks ?? []) : advice.lines
                 // 배치도: 가까운 덱(시너지를 못 읽었으면 1위 메타 덱)을 지금 레벨 단계로
                 if let deck = advice.best ?? rawDecks?.first {
-                    let stage = TFTBoard.stage(forLevel: (g.all["activePlayer"] as? [String: Any])?["level"] as? Int)
-                    model.tftDeck = ((deck["name"] as? [String: Any])?["ko_KR"] as? String ?? "?", stage, TFTBoard.units(deck, stage: stage), deck)
+                    let bu = await OPGG.buildUp(deckId: deck["id"] as? String ?? "")
+                    let stage = TFTBoard.stage(forLevel: (g.all["activePlayer"] as? [String: Any])?["level"] as? Int, buildUp: bu)
+                    model.tftDeck = ((deck["name"] as? [String: Any])?["ko_KR"] as? String ?? "?", stage, TFTBoard.units(deck, stage: stage, buildUp: bu), deck)
                 }
                 model.augments = AugmentOCR.hits(AugmentOCR.tft(), lines)
             } else {

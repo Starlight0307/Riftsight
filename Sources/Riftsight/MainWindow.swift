@@ -25,6 +25,14 @@ enum Theme {
     @Published var decks: [[String: Any]] = []
     @Published var openDeck: String?          // 펼친 덱 id (배치도·아이템 보기)
     @Published var deckStage = "final"
+    @Published var buildUps: [String: TFTBoard.BuildUp] = [:]  // 덱 id → 레벨 4~10 배치 (펼칠 때 받음)
+
+    func openDeck(_ id: String) async {
+        openDeck = id
+        if buildUps[id] == nil { buildUps[id] = await OPGG.buildUp(deckId: id) }
+        // 빌드업이 있으면 레벨 4부터, 없으면 공식 최종부터
+        deckStage = buildUps[id]?.isEmpty == false ? "\(buildUps[id]!.keys.min()!)" : "final"
+    }
 
     func loadTiers() async {
         guard tiers.isEmpty else { return }
@@ -308,7 +316,7 @@ struct TFTView: View {
             Text(open ? "⌃" : "⌄").foregroundStyle(Theme.sub)
         }
         .contentShape(Rectangle())
-        .onTapGesture { store.openDeck = open ? nil : id }
+        .onTapGesture { if open { store.openDeck = nil } else { Task { await store.openDeck(id) } } }
         if open { deckDetail(d) }
         }
         .padding(14)
@@ -319,11 +327,12 @@ struct TFTView: View {
 extension TFTView {
     // 펼친 덱: 레벨 탭 + 배치도 + (최종) 챔피언별 아이템
     func deckDetail(_ d: [String: Any]) -> some View {
-        let units = TFTBoard.units(d, stage: store.deckStage)
+        let bu = store.buildUps[d["id"] as? String ?? ""]
+        let units = TFTBoard.units(d, stage: store.deckStage, buildUp: bu)
         return HStack(alignment: .top, spacing: 24) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
-                    ForEach(TFTBoard.stages, id: \.0) { key, title in
+                    ForEach(TFTBoard.stages(bu), id: \.0) { key, title in
                         Button(title) { store.deckStage = key }.buttonStyle(.plain)
                             .font(.system(size: 12, weight: .bold))
                             .padding(.horizontal, 10).padding(.vertical, 5)
@@ -340,8 +349,8 @@ extension TFTView {
                     Text("챔피언별 아이템").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.sub)
                     ForEach(Array(withItems.enumerated()), id: \.offset) { _, u in
                         HStack(spacing: 8) {
-                            Icon(url: dd.tftUnit(u.key), size: 30)
-                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(TFTBoard.costColor(dd.tftCost[u.key]), lineWidth: 2))
+                            Icon(url: u.icon ?? dd.tftUnit(u.key), size: 30)
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(TFTBoard.costColor(u.cost ?? dd.tftCost[u.key]), lineWidth: 2))
                             Text(dd.tftNames[u.key] ?? u.key).font(.system(size: 12, weight: .bold)).frame(width: 70, alignment: .leading)
                             ForEach(Array(u.items.enumerated()), id: \.offset) { _, i in
                                 Icon(url: dd.tftItems[i]?.icon, size: 26).help(dd.tftItems[i]?.name ?? i)
