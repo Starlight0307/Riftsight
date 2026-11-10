@@ -289,6 +289,7 @@ struct TFTView: View {
                 .background(op == "OP" ? Theme.tier(1) : op == "S" ? Theme.accent : Theme.tier(3), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 8) {
                 Text((d["name"] as? [String: Any])?["ko_KR"] as? String ?? "?").font(.system(size: 15, weight: .bold))
+                DeckBadges(deck: d)
                 HStack(spacing: 4) {
                     ForEach(Array(units.enumerated()), id: \.offset) { _, u in
                         let key = u["key"] as? String ?? ""

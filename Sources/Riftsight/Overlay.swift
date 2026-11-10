@@ -43,7 +43,10 @@ struct OverlayView: View {
                             if let t = model.tftDeck {
                                 Panel(title: "덱 정보", scale: scale, opacity: opacity) {
                                     HStack {
-                                        Text(t.name).font(.system(size: 12 * scale, weight: .bold))
+                                        VStack(alignment: .leading, spacing: 4 * scale) {
+                                            Text(t.name).font(.system(size: 12 * scale, weight: .bold))
+                                            DeckBadges(deck: t.deck, scale: scale)
+                                        }
                                         Spacer()
                                         Text(TFTBoard.stages.first { $0.0 == t.stage }?.1 ?? "").font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(OV.teal)
                                     }
@@ -338,6 +341,15 @@ struct TFTBoard: View {
         }
     }
 
+    // 덱 이름 밑 표시: 난이도(1 쉬움·2 보통·3 어려움), 리롤 레벨(⟳ Lv 8)
+    static func badges(_ deck: [String: Any]) -> [(String, Color)] {
+        let b = Dictionary((deck["badge"] as? [[String: Any]] ?? []).compactMap { x in (x["key"] as? String).map { ($0, x["value"]) } }, uniquingKeysWith: { a, _ in a })
+        var out: [(String, Color)] = []
+        if let d = b["difficulty"] as? Int, let t = [1: ("쉬움", OV.teal), 2: ("보통", Color.yellow), 3: ("어려움", OV.red)][d] { out.append(t) }
+        if let r = b["reroll"] as? Int { out.append(("⟳ Lv \(r)", Color(white: 0.75))) }
+        return out
+    }
+
     // 지금 레벨에 맞는 단계 (오버레이는 눌러 고를 수 없어서)
     static func stage(forLevel l: Int?) -> String {
         guard let l else { return "final" }
@@ -384,6 +396,21 @@ struct TFTBoard: View {
             }
         }
         .frame(width: cell, height: cell)
+    }
+}
+
+struct DeckBadges: View {
+    let deck: [String: Any]
+    var scale: Double = 1
+    var body: some View {
+        let s = CGFloat(scale)
+        HStack(spacing: 5 * s) {
+            ForEach(Array(TFTBoard.badges(deck).enumerated()), id: \.offset) { _, b in
+                Text(b.0).font(.system(size: 10 * s, weight: .bold)).foregroundStyle(b.1)
+                    .padding(.horizontal, 6 * s).padding(.vertical, 2 * s)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(b.1.opacity(0.6)))
+            }
+        }
     }
 }
 
