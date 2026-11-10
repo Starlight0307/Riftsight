@@ -12,6 +12,7 @@ if CommandLine.arguments.contains("--selftest") {
 @MainActor final class Model: ObservableObject {
     @Published var lines: [String] = []
     @Published var augments: [AugmentHit] = []
+    @Published var card: BuildCard.Info?  // 롤 빌드가 있으면 글줄 대신 아이콘 카드로
 }
 
 // 설정 화면(SettingsView)과 오버레이가 함께 쓰는 값. UserDefaults 에 저장돼 다시 켜도 유지
@@ -32,16 +33,22 @@ struct OverlayView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                if showPanel && !model.lines.isEmpty {
+                if showPanel && (model.card != nil || !model.lines.isEmpty) {
                     let top = corner.hasPrefix("t"), left = corner.hasSuffix("l")
-                    VStack(alignment: .leading, spacing: 4 * scale) {
-                        ForEach(Array(model.lines.enumerated()), id: \.offset) { i, l in
-                            Text(l).font(.system(size: (i == 0 ? 14 : 12) * scale, weight: i == 0 ? .bold : .regular))
+                    Group {
+                        if let c = model.card { BuildCard(info: c, scale: scale) }
+                        else {
+                            VStack(alignment: .leading, spacing: 4 * scale) {
+                                ForEach(Array(model.lines.enumerated()), id: \.offset) { i, l in
+                                    Text(l).font(.system(size: (i == 0 ? 14 : 12) * scale, weight: i == 0 ? .bold : .regular))
+                                }
+                            }
                         }
                     }
                     .foregroundStyle(.white)
-                    .padding(10)
-                    .background(.black.opacity(opacity), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(12 * scale)
+                    .background(Theme.bg.opacity(opacity), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
                     .frame(maxWidth: 420 * scale, alignment: .leading)
                     // 위쪽은 게임 상단 정보, 아래쪽은 미니맵·상점을 피하도록 여백
                     .padding(left ? .leading : .trailing, 16)
@@ -51,21 +58,30 @@ struct OverlayView: View {
                 }
                 // 증강체 이름 바로 위에 등급 배지
                 ForEach(model.augments) { a in
-                    Text([a.note, a.tier].filter { !$0.isEmpty }.joined(separator: " "))
-                        .font(.system(size: 15 * scale, weight: .heavy))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(color(a), in: Capsule())
-                        .position(x: a.box.midX * geo.size.width, y: (1 - a.box.maxY) * geo.size.height - 16)
+                    HStack(spacing: 6 * scale) {
+                        Text(a.tier.count == 1 ? a.tier : "?")
+                            .font(.system(size: 15 * scale, weight: .heavy)).foregroundStyle(.white)
+                            .frame(width: 24 * scale, height: 24 * scale)
+                            .background(grade(a.tier), in: RoundedRectangle(cornerRadius: 5))
+                        Text(a.tier.count == 1 ? a.note : "\(a.note) · 자료 없음").font(.system(size: 12 * scale, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.leading, 4 * scale).padding(.trailing, 10 * scale).padding(.vertical, 4 * scale)
+                    .background(Theme.bg.opacity(0.92), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(rarity(a), lineWidth: 1.5))
+                    .position(x: a.box.midX * geo.size.width, y: (1 - a.box.maxY) * geo.size.height - 20 * scale)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
-    // 롤 증강체는 희귀도 색, TFT 는 등급 색
-    func color(_ a: AugmentHit) -> Color {
-        ["프리즘": .purple, "골드": .yellow, "실버": Color(white: 0.8)][a.note] ?? ["S": .orange, "A": .yellow, "B": .green, "C": .mint][a.tier] ?? .gray
+    // 테두리는 희귀도, 네모 칸은 등급 색
+    func rarity(_ a: AugmentHit) -> Color {
+        ["프리즘": .purple, "골드": .yellow, "실버": Color(white: 0.8)][a.note] ?? Theme.line
+    }
+    func grade(_ t: String) -> Color {
+        ["S": Color(red: 0.91, green: 0.25, blue: 0.34), "A": .orange, "B": Theme.accent, "C": Theme.tier(1), "D": .gray][t] ?? Color(white: 0.3)
     }
 }
 
@@ -76,7 +92,7 @@ struct OverlayView: View {
     var status: NSStatusItem!
     var shown: Bool { UserDefaults.standard.bool(forKey: "overlayOn") }
     var scanAugments: Bool { shown && UserDefaults.standard.bool(forKey: "showAugments") }
-    var buildCache: [String: (lines: [String], spells: [Int])] = [:]
+    var buildCache: [String: (lines: [String], spells: [Int], data: [String: Any]?)] = [:]
     var spellsSetFor: String?  // 이 챔프 선택에서 스펠을 넣어 준 챔피언. 그 뒤 사용자가 바꾸면 덮어쓰지 않음
     var decks: [String]?
     var champIds: [String: Int] = [:]
@@ -107,6 +123,7 @@ struct OverlayView: View {
         status.menu = menu
 
         Task {
+            await DDragon.shared.load()  // 오버레이 카드 아이콘용
             await Updater.check()
             await syncTiers()  // 시즌·패치로 증강체가 바뀌었으면 등급표를 맞춰 둠
             await loop()
@@ -186,10 +203,13 @@ struct OverlayView: View {
         if let g = await League.liveGame() {
             if g.mode == "TFT" {
                 if decks == nil { decks = await OPGG.metaDecks() }
+                model.card = nil
                 model.lines = decks ?? []
                 model.augments = scanAugments ? await AugmentOCR.scan(AugmentOCR.tft(), excluding: CGWindowID(window.windowNumber)) : []
             } else {
-                model.lines = await build(g.key, g.name, g.position).lines
+                let b = await build(g.key, g.name, g.position)
+                model.lines = b.lines
+                model.card = b.data.map { .init(key: g.key, name: g.name, position: g.position, data: $0) }
                 // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만
                 model.augments = scanAugments && g.mode != "CLASSIC"
                     ? await AugmentOCR.scan(await lolAugments(g.key), excluding: CGWindowID(window.windowNumber)) : []
@@ -198,11 +218,13 @@ struct OverlayView: View {
             model.augments = []
             let b = await build(c.key, c.name, c.position)
             model.lines = b.lines
+            model.card = b.data.map { .init(key: c.key, name: c.name, position: c.position, data: $0) }
             if spellsSetFor != c.key, b.spells.count == 2, await League.setSpells(League.arrange(b.spells, current: c.spells)) {
                 spellsSetFor = c.key
             }
         } else {
             spellsSetFor = nil  // 다음 판 챔프 선택에서 다시 넣도록
+            model.card = nil
             model.lines = []
             model.augments = []
         }
@@ -217,8 +239,8 @@ struct OverlayView: View {
         return table
     }
 
-    func build(_ key: String, _ name: String, _ pos: String) async -> (lines: [String], spells: [Int]) {
-        guard !key.isEmpty else { return ([], []) }
+    func build(_ key: String, _ name: String, _ pos: String) async -> (lines: [String], spells: [Int], data: [String: Any]?) {
+        guard !key.isEmpty else { return ([], [], nil) }
         let k = key + pos
         if let hit = buildCache[k] { return hit }
         let b = await OPGG.build(key: key, name: name, position: pos)

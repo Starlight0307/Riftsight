@@ -36,8 +36,8 @@ enum OPGG {
     }
 
     // 롤 빌드 카드 (한 줄씩) + 추천 스펠 번호(챔프 선택 때 자동으로 넣음)
-    static func build(key: String, name: String, position: String) async -> (lines: [String], spells: [Int]) {
-        guard let data = await analysis(key: key, position: position) else { return (["\(name): OP.GG 빌드를 불러오지 못했어요"], []) }
+    static func build(key: String, name: String, position: String) async -> (lines: [String], spells: [Int], data: [String: Any]?) {
+        guard let data = await analysis(key: key, position: position) else { return (["\(name): OP.GG 빌드를 불러오지 못했어요"], [], nil) }
         func names(_ k: String) -> String { ((data[k] as? [String: Any])?["ids_names"] as? [String] ?? []).joined(separator: " → ") }
         // shortcut: 아수라장(KIWI)도 OP.GG 에 따로 없어 무작위 총력전 통계로 보여 줌, OP.GG 가 모드를 추가하면 나누기
         var lines = [name + " · " + (position.isEmpty ? "무작위 총력전" : position)]
@@ -57,7 +57,7 @@ enum OPGG {
         let ids = (data["summoner_spells"] as? [String: Any])?["ids_names"] as? [Double] ?? []
         if !ids.isEmpty { lines.append("스펠  " + ids.map { spell[Int($0)] ?? "\(Int($0))번" }.joined(separator: " + ")) }
         if let o = (data["skills"] as? [String: Any])?["order"] as? [String] { lines.append("스킬  " + o.joined(separator: " ")) }
-        return (lines, ids.map { Int($0) })
+        return (lines, ids.map { Int($0) }, data)
     }
 
     // 영문 키(MonkeyKing) → 챔피언 번호. 증강체 조회가 번호로만 받는다

@@ -8,6 +8,7 @@ import Foundation
     private var champs: [String: String] = [:]  // 한글 이름 → 영문 id(MonkeyKing)
     private var items: [String: String] = [:]   // 한글 이름 → 이미지 파일
     private var runes: [String: String] = [:]   // 한글 이름 → 아이콘 경로
+    private var spells: [Int: String] = [:]     // 소환사 주문 번호(4=점멸) → 이미지 파일
 
     func load() async {
         guard !ready, let v = (await get("https://ddragon.leagueoflegends.com/api/versions.json") as? [String])?.first else { return }
@@ -31,6 +32,11 @@ import Foundation
                 }
             }
         }
+        if let s = (await get(base + "/summoner.json") as? [String: Any])?["data"] as? [String: [String: Any]] {
+            for info in s.values {
+                if let k = (info["key"] as? String).flatMap(Int.init), let f = (info["image"] as? [String: Any])?["full"] as? String { spells[k] = f }
+            }
+        }
         ready = true
     }
 
@@ -42,6 +48,9 @@ import Foundation
     }
     func item(_ koName: String) -> URL? {
         items[koName].flatMap { URL(string: "https://ddragon.leagueoflegends.com/cdn/\(version)/img/item/\($0)") }
+    }
+    func spell(_ id: Int) -> URL? {
+        spells[id].flatMap { URL(string: "https://ddragon.leagueoflegends.com/cdn/\(version)/img/spell/\($0)") }
     }
     func rune(_ koName: String) -> URL? {
         runes[koName].flatMap { URL(string: "https://ddragon.leagueoflegends.com/cdn/img/\($0)") }

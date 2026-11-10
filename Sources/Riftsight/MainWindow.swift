@@ -244,6 +244,82 @@ struct ChampionDetail: View {
     }
 }
 
+// 게임 위 오버레이용 작은 빌드 카드: 챔피언·티어·승률, 룬·아이템·스펠 아이콘, 스킬 순서
+struct BuildCard: View {
+    struct Info { let key: String, name: String, position: String, data: [String: Any] }
+    let info: Info
+    var scale: Double = 1
+    @ObservedObject private var dd = DDragon.shared
+
+    var d: [String: Any] { info.data }
+    var s: CGFloat { CGFloat(scale) }
+    var stats: [String: Any]? { (d["summary"] as? [String: Any])?["average_stats"] as? [String: Any] }
+    var tier: Int { Int(stats?["tier"] as? Double ?? 0) }
+    func names(_ k: String) -> [String] { (d[k] as? [String: Any])?["ids_names"] as? [String] ?? [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10 * s) {
+            HStack(spacing: 10 * s) {
+                Icon(url: dd.championById(info.key), size: 44 * s)
+                VStack(alignment: .leading, spacing: 3 * s) {
+                    HStack(spacing: 6 * s) {
+                        Text(info.name).font(.system(size: 15 * s, weight: .bold))
+                        if tier > 0 {
+                            Text("\(tier)티어").font(.system(size: 11 * s, weight: .bold))
+                                .padding(.horizontal, 6 * s).padding(.vertical, 2 * s)
+                                .background(Theme.tier(tier), in: RoundedRectangle(cornerRadius: 4))
+                        }
+                    }
+                    Text([LoLView.lanes.first { $0.0 == info.position }?.1 ?? "무작위 총력전",
+                          (stats?["win_rate"] as? Double).map { String(format: "승률 %.1f%%", $0 * 100) },
+                          (stats?["rank"] as? Double).map { "\(Int($0))위" }].compactMap { $0 }.joined(separator: " · "))
+                        .font(.system(size: 11 * s)).foregroundStyle(Theme.sub)
+                }
+            }
+            if let r = d["runes"] as? [String: Any] {
+                row("룬") {
+                    ForEach((r["primary_rune_names"] as? [String] ?? []) + (r["secondary_rune_names"] as? [String] ?? []), id: \.self) {
+                        Icon(url: dd.rune($0), size: 22 * s)
+                    }
+                }
+            }
+            row("시작") { items(names("starter_items")) }
+            row("핵심") { items(names("core_items"), arrows: true) }
+            row("신발·스펠") {
+                items(names("boots"))
+                ForEach(((d["summoner_spells"] as? [String: Any])?["ids_names"] as? [Double] ?? []).map(Int.init), id: \.self) {
+                    Icon(url: dd.spell($0), size: 24 * s)
+                }
+            }
+            if let o = (d["skills"] as? [String: Any])?["order"] as? [String] {
+                row("스킬") {
+                    HStack(spacing: 2 * s) {
+                        ForEach(Array(o.enumerated()), id: \.offset) { _, k in
+                            Text(k).font(.system(size: 10 * s, weight: .bold)).frame(width: 16 * s, height: 16 * s)
+                                .background(k == "R" ? Theme.accent : Theme.card, in: RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func row<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        HStack(spacing: 6 * CGFloat(scale)) {
+            Text(title).font(.system(size: 10 * CGFloat(scale), weight: .bold)).foregroundStyle(Theme.sub)
+                .frame(width: 52 * CGFloat(scale), alignment: .leading)
+            content()
+        }
+    }
+
+    func items(_ names: [String], arrows: Bool = false) -> some View {
+        ForEach(Array(names.enumerated()), id: \.offset) { i, n in
+            if i > 0 && arrows { Text("›").font(.system(size: 12 * CGFloat(scale))).foregroundStyle(Theme.sub) }
+            Icon(url: dd.item(n), size: 24 * CGFloat(scale))
+        }
+    }
+}
+
 struct Stat: View {
     let title: String, value: String
     var body: some View {
