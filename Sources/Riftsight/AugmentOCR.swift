@@ -57,8 +57,11 @@ enum AugmentOCR {
     }
 
     // 화면을 찍어 글자 줄과 위치(Vision 정규화 좌표)를 돌려준다. 증강체·TFT 시너지가 함께 씀
+    static var denied = false  // 마지막 화면 찍기가 권한 때문에 실패했는지 (오버레이에 알려 줌)
     static func read(excluding window: CGWindowID?) async -> [(String, CGRect)] {
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true),
+        let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        denied = content == nil
+        guard let content,
               let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else { return [] }
         let mine = content.windows.filter { $0.windowID == window }
         let cfg = SCStreamConfiguration()

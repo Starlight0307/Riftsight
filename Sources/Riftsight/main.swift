@@ -225,6 +225,7 @@ enum Pref {
                     model.tftDeck = ((deck["name"] as? [String: Any])?["ko_KR"] as? String ?? "?", stage, TFTBoard.units(deck, stage: stage, buildUp: bu), TFTBoard.traits(deck, stage: stage, buildUp: bu), deck)
                 }
                 model.augments = AugmentOCR.hits(AugmentOCR.tft(), lines)
+                if scanAugments && AugmentOCR.denied { model.lines.append(Self.deniedLine) }
             } else {
                 model.tftDeck = nil
                 let b = await build(g.key, g.name, g.position)
@@ -235,6 +236,7 @@ enum Pref {
                 // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만
                 model.augments = scanAugments && g.mode != "CLASSIC"
                     ? await AugmentOCR.scan(await lolAugments(g.key, mode: g.mode), excluding: CGWindowID(window.windowNumber)) : []
+                if scanAugments && g.mode != "CLASSIC" && AugmentOCR.denied { model.info.append(Self.deniedLine) }
             }
         } else if let l = await League.loading() {
             let dd = DDragon.shared
@@ -269,6 +271,8 @@ enum Pref {
             model.augments = []
         }
     }
+
+    static let deniedLine = "증강체  화면 기록 권한이 없어 읽지 못해요 — 허용 후 메뉴바 ◈ 종료·다시 실행"
 
     // 아수라장(KIWI)은 OP.GG 웹 아수라장 등급, 못 읽거나 다른 모드면 공식 무작위 총력전 성적
     func lolAugments(_ key: String, mode: String) async -> AugmentOCR.Keyed {
