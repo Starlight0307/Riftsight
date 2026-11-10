@@ -23,13 +23,13 @@ enum League {
         return URLSession(configuration: cfg, delegate: LocalTrust(), delegateQueue: nil)
     }()
 
-    static func json(_ url: String, auth: String? = nil, method: String = "GET", body: [String: Any]? = nil) async -> Any? {
+    static func json(_ url: String, auth: String? = nil, method: String = "GET", body: [String: Any]? = nil, array: [Any]? = nil) async -> Any? {
         guard let u = URL(string: url) else { return nil }
         var req = URLRequest(url: u)
         req.httpMethod = method
-        if let body {
+        if let payload = body.map({ $0 as Any }) ?? array.map({ $0 as Any }) {
             req.setValue("application/json", forHTTPHeaderField: "content-type")
-            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         }
         if let auth { req.setValue("Basic " + Data(auth.utf8).base64EncodedString(), forHTTPHeaderField: "Authorization") }
         guard let (d, r) = try? await session.data(for: req), (200..<300).contains((r as? HTTPURLResponse)?.statusCode ?? 0) else { return nil }
@@ -153,6 +153,19 @@ enum League {
         return await json(base + "/lol-champ-select/v1/session/my-selection", auth: auth, method: "PATCH", body: ["spell1Id": s[0], "spell2Id": s[1]]) != nil
     }
 
+    // TFT 덱을 클라이언트 팀 플래너에 추가 (클라이언트 '팀 코드 붙여넣기'와 같은 결과, 이름은 덱 이름)
+    static func addTFTTeam(set: String, name: String, champions: [String]) async -> Bool {
+        guard !champions.isEmpty, let (base, auth) = lcu(),
+              let n = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) else { return false }
+        let b = base + "/lol-tft-team-planner/v1/sets/\(set)", id = UUID().uuidString.lowercased()
+        guard await json(b + "/teams/\(id)/import", auth: auth, method: "POST", body: nil, array: champions) != nil else { return false }
+        _ = await json(b + "/teams/\(id)/\(n)", auth: auth, method: "PATCH")
+        return await json(base + "/lol-tft-team-planner/v1/sets/push-to-server", auth: auth, method: "POST") != nil
+    }
+
+    // 덱 팀 코드 끝의 세트 이름 (…TFTSet18 → TFTSet18)
+    static func tftSet(_ teamCode: String) -> String? { teamCode.range(of: "TFTSet").map { String(teamCode[$0.lowerBound...]) } }
+
     // 추천 아이템 세트를 클라이언트 상점에 넣기. 사용자가 만든 세트는 그대로 두고 Riftsight 세트(uid riftsight-) 하나만 바꿈
     static func setItemSet(champId: Int, map: Int, title: String, blocks: [(title: String, ids: [Int])]) async -> Bool {
         guard !blocks.isEmpty, let (base, auth) = lcu(),
@@ -203,6 +216,7 @@ enum League {
         let sets = itemSets([["uid": "mine", "title": "내 세트"], ["uid": "riftsight-1", "title": "옛 세트"]], champId: 141, map: 12, title: "새", blocks: [("시작", [1055, 2003])])
         assert(sets.count == 2 && sets[0]["uid"] as? String == "mine" && sets[1]["uid"] as? String == "riftsight-141", "itemSets keep user sets")
         assert(((sets[1]["blocks"] as? [[String: Any]])?.first?["items"] as? [[String: Any]])?.first?["id"] as? String == "1055", "itemSets ids")
+        assert(tftSet("0241143a40740a41042743b3f1000000TFTSet18") == "TFTSet18" && tftSet("abc") == nil, "tftSet")
         print("League self-test OK")
     }
 }

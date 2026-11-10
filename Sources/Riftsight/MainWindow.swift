@@ -26,6 +26,15 @@ enum Theme {
     @Published var openDeck: String?          // 펼친 덱 id (배치도·아이템 보기)
     @Published var deckStage = "final"
     @Published var buildUps: [String: TFTBoard.BuildUp] = [:]  // 덱 id → 레벨 4~10 배치 (펼칠 때 받음)
+    @Published var teamAdded: [String: String] = [:]           // 덱 id → 팀 구성 추가 결과 문구
+
+    func addTeam(_ d: [String: Any]) async {
+        let id = d["id"] as? String ?? ""
+        let units = (d["units"] as? [[String: Any]] ?? []).compactMap { $0["key"] as? String }
+        guard let set = League.tftSet(d["teamCode"] as? String ?? "") else { teamAdded[id] = "세트 정보가 없어요"; return }
+        let ok = await League.addTFTTeam(set: set, name: (d["name"] as? [String: Any])?["ko_KR"] as? String ?? "Riftsight 덱", champions: units)
+        teamAdded[id] = ok ? "팀 구성에 추가됨 ✓" : "롤 클라이언트를 켜 주세요"
+    }
 
     func openDeck(_ id: String) async {
         openDeck = id
@@ -314,6 +323,10 @@ struct TFTView: View {
             Stat(title: "평균 등수", value: String(format: "%.2f", deck?["avgPlacement"] as? Double ?? 0))
             Stat(title: "순방률", value: String(format: "%.0f%%", (deck?["top4Rate"] as? Double ?? 0) * 100))
             Stat(title: "1등률", value: String(format: "%.0f%%", (deck?["winRate"] as? Double ?? 0) * 100))
+            VStack(spacing: 4) {
+                Button("팀 구성에 추가") { Task { await store.addTeam(d) } }
+                if let msg = store.teamAdded[id] { Text(msg).font(.system(size: 10)).foregroundStyle(msg.hasSuffix("✓") ? OV.teal : .orange) }
+            }
             Text(open ? "⌃" : "⌄").foregroundStyle(Theme.sub)
         }
         .contentShape(Rectangle())
