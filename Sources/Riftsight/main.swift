@@ -22,7 +22,7 @@ if CommandLine.arguments.contains("--selftest") {
 enum Pref {
     static let defaults: [String: Any] = [
         "overlayOn": true, "showPanel": true, "showAugments": true,
-        "corner": "tl", "opacity": 0.7, "scale": 1.0,
+        "opacity": 0.7, "scale": 1.0,
     ]
 }
 
@@ -30,11 +30,14 @@ enum Pref {
     let model = Model()
     var window: NSWindow!
     var mainWindow: NSWindow?
+    var panel: NSPanel!          // 정보 창들. 클릭·끌기를 받는 작은 창 (전체 화면 층은 클릭 통과)
+    var dragOffset: CGPoint?
     var status: NSStatusItem!
     var shown: Bool { UserDefaults.standard.bool(forKey: "overlayOn") }
     var scanAugments: Bool { shown && UserDefaults.standard.bool(forKey: "showAugments") }
     var buildCache: [String: (lines: [String], spells: [Int], data: [String: Any]?)] = [:]
     var spellsSetFor: String?  // 이 챔프 선택에서 스펠을 넣어 준 챔피언. 그 뒤 사용자가 바꾸면 덮어쓰지 않음
+    var itemSetFor: String?    // 아이템 세트를 넣어 준 챔피언
     var decks: [String]?
     var rawDecks: [[String: Any]]?
     var champIds: [String: Int] = [:]
@@ -51,6 +54,21 @@ enum Pref {
         window.level = NSWindow.Level(NSWindow.Level.screenSaver.rawValue + 1)  // 롤 게임 창이 .screenSaver(1000) 층이라 같은 층이면 가려짐
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.contentView = NSHostingView(rootView: OverlayView(model: model))
+
+        // 눌러도 게임 창이 뒤로 가지 않도록 앞으로 나오지 않는(nonactivating) 창
+        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.level = window.level
+        panel.collectionBehavior = window.collectionBehavior
+        let host = NSHostingController(rootView: PanelsView(model: model))
+        host.sizingOptions = .preferredContentSize  // 창 크기가 내용을 따라감
+        panel.contentViewController = host
+        panel.delegate = self
+        panel.setFrameTopLeftPoint(panelTopLeft)
         applyShown()
 
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -92,6 +110,38 @@ enum Pref {
         mainWindow?.makeKeyAndOrderFront(nil)
     }
 
+    // 정보 창 왼쪽 위 위치 (저장값, 없으면 화면 왼쪽 위에서 게임 상단 정보를 피한 자리)
+    var panelTopLeft: CGPoint {
+        let d = UserDefaults.standard
+        if d.object(forKey: "panelX") != nil { return CGPoint(x: d.double(forKey: "panelX"), y: d.double(forKey: "panelY")) }
+        let f = NSScreen.screens.first?.frame ?? .zero
+        return CGPoint(x: f.minX + 16, y: f.maxY - 90)
+    }
+
+    func dragPanel() {
+        let m = NSEvent.mouseLocation
+        if dragOffset == nil { dragOffset = CGPoint(x: m.x - panel.frame.minX, y: m.y - panel.frame.maxY) }
+        guard let o = dragOffset else { return }
+        panel.setFrameTopLeftPoint(CGPoint(x: m.x - o.x, y: m.y - o.y))
+    }
+
+    func endPanelDrag() {
+        dragOffset = nil
+        UserDefaults.standard.set(panel.frame.minX, forKey: "panelX")
+        UserDefaults.standard.set(panel.frame.maxY, forKey: "panelY")
+    }
+
+    @objc func resetPanelPosition() {
+        UserDefaults.standard.removeObject(forKey: "panelX")
+        UserDefaults.standard.removeObject(forKey: "panelY")
+        panel.setFrameTopLeftPoint(panelTopLeft)
+    }
+
+    // 내용이 늘거나 줄면 아래 모서리 기준으로 바뀌므로 왼쪽 위를 다시 맞춘다
+    func windowDidResize(_ n: Notification) {
+        if (n.object as? NSWindow) === panel, dragOffset == nil { panel.setFrameTopLeftPoint(panelTopLeft) }
+    }
+
     func windowWillClose(_ n: Notification) {
         if (n.object as? NSWindow) === mainWindow { NSApp.setActivationPolicy(.accessory) }
     }
@@ -111,6 +161,7 @@ enum Pref {
         // 켤 때 화면 크기에 묶이지 않도록 지금 주 모니터(메뉴 막대 있는 쪽)에 맞춤
         if let f = NSScreen.screens.first?.frame, window.frame != f { window.setFrame(f, display: false) }
         if shown != window.isVisible { shown ? window.orderFrontRegardless() : window.orderOut(nil) }
+        if shown != panel.isVisible { shown ? panel.orderFrontRegardless() : panel.orderOut(nil) }
     }
 
     @objc func openTiers() {
@@ -190,8 +241,15 @@ enum Pref {
             if spellsSetFor != c.key, b.spells.count == 2, await League.setSpells(League.arrange(b.spells, current: c.spells)) {
                 spellsSetFor = c.key
             }
+            // 그 챔피언·그 맵(협곡 11, 라인 없는 모드는 칼바람 12) 상점 추천에 OP.GG 빌드
+            if itemSetFor != c.key, let d = b.data,
+               await League.setItemSet(champId: c.champId, map: c.position.isEmpty ? 12 : 11,
+                                       title: "Riftsight · \(c.name)" + (c.position.isEmpty ? " (무작위 총력전)" : ""), blocks: OPGG.itemBlocks(d)) {
+                itemSetFor = c.key
+            }
         } else {
             spellsSetFor = nil  // 다음 판 챔프 선택에서 다시 넣도록
+            itemSetFor = nil
             model.tftDeck = nil
             model.card = nil
             model.info = []

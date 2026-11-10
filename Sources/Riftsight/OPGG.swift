@@ -26,7 +26,8 @@ enum OPGG {
             "champion": key.uppercased(), "lang": "ko_KR",
             "desired_output_fields": [
                 "data.summary.average_stats.{win_rate,tier,rank}",
-                "data.core_items.{pick_rate,play,win}", "data.fourth_items[].{ids_names[],pick_rate,play,win}", "data.skill_masteries.{ids[]}",
+                "data.core_items.{pick_rate,play,win,ids[]}", "data.fourth_items[].{ids_names[],ids[],pick_rate,play,win}", "data.skill_masteries.{ids[]}",
+                "data.starter_items.{ids[]}", "data.boots.{ids[]}", "data.fifth_items[].{ids[]}", "data.sixth_items[].{ids[]}",
                 "data.runes.{primary_page_name,primary_rune_names[],secondary_page_name,secondary_rune_names[]}",
                 "data.starter_items.{ids_names[]}", "data.core_items.{ids_names[]}",
                 "data.boots.{ids_names[]}", "data.skills.{order[]}", "data.summoner_spells.{ids_names[]}",
@@ -59,6 +60,19 @@ enum OPGG {
         if !ids.isEmpty { lines.append("스펠  " + ids.map { spell[Int($0)] ?? "\(Int($0))번" }.joined(separator: " + ")) }
         if let o = (data["skills"] as? [String: Any])?["order"] as? [String] { lines.append("스킬  " + o.joined(separator: " ")) }
         return (lines, ids.map { Int($0) }, data)
+    }
+
+    // 클라이언트 아이템 세트 칸: 시작 · 핵심(승률·픽률) · 신발 · 4~6번째 후보
+    static func itemBlocks(_ d: [String: Any]) -> [(title: String, ids: [Int])] {
+        func ids(_ x: Any?) -> [Int] { ((x as? [String: Any])?["ids"] as? [Double] ?? []).map { Int($0) } }
+        func alts(_ k: String) -> [Int] { (d[k] as? [[String: Any]] ?? []).flatMap(ids).reduce(into: []) { if !$0.contains($1) { $0.append($1) } } }
+        let core = d["core_items"] as? [String: Any] ?? [:]
+        let wr = (core["win"] as? Double).flatMap { w in (core["play"] as? Double).map { $0 > 0 ? w / $0 * 100 : 0 } }
+        let pr = (core["pick_rate"] as? Double).map { $0 * 100 }
+        let coreTitle = "핵심 아이템" + (wr.map { String(format: " · 승률 %.1f%%", $0) } ?? "") + (pr.map { String(format: " · 픽률 %.1f%%", $0) } ?? "")
+        return [("시작 아이템", ids(d["starter_items"])), (coreTitle, ids(core)), ("신발", ids(d["boots"])),
+                ("4번째 아이템 후보", alts("fourth_items")), ("5번째 아이템 후보", alts("fifth_items")), ("6번째 아이템 후보", alts("sixth_items"))]
+            .filter { !$0.ids.isEmpty }
     }
 
     // 영문 키(MonkeyKing) → 챔피언 번호. 증강체 조회가 번호로만 받는다
@@ -297,6 +311,9 @@ enum OPGG {
             ["name": ["ko_KR": "다른 덱"], "traits": [["key": "Z", "style": 2]], "units": []],
         ]
         let names = ["S": "햇빛", "E": "처형자", "X": "엉뚱", "U": "유나라"]
+        let blocks = itemBlocks(["starter_items": ["ids": [1055.0]], "core_items": ["ids": [3031.0], "play": 10.0, "win": 6.0, "pick_rate": 0.2],
+                                 "fourth_items": [["ids": [3036.0]], ["ids": [3036.0]], ["ids": [3072.0]]]])
+        assert(blocks.map(\.title) == ["시작 아이템", "핵심 아이템 · 승률 60.0% · 픽률 20.0%", "4번째 아이템 후보"] && blocks[2].ids == [3036, 3072], "itemBlocks")
         let near = closestDecks(seen: ["S", "X"], decks: decks, name: { names[$0] })
         assert(near.lines == ["내 시너지  엉뚱, 햇빛", "가까운 덱  햇빛 유나라 (시너지 1/2) · 핵심 유나라"], "closestDecks")
         assert((near.best?["name"] as? [String: Any])?["ko_KR"] as? String == "햇빛 유나라", "closest best")

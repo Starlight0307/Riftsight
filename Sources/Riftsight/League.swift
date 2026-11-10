@@ -23,17 +23,17 @@ enum League {
         return URLSession(configuration: cfg, delegate: LocalTrust(), delegateQueue: nil)
     }()
 
-    static func json(_ url: String, auth: String? = nil, patch: [String: Any]? = nil) async -> Any? {
+    static func json(_ url: String, auth: String? = nil, method: String = "GET", body: [String: Any]? = nil) async -> Any? {
         guard let u = URL(string: url) else { return nil }
         var req = URLRequest(url: u)
-        if let patch {
-            req.httpMethod = "PATCH"
+        req.httpMethod = method
+        if let body {
             req.setValue("application/json", forHTTPHeaderField: "content-type")
-            req.httpBody = try? JSONSerialization.data(withJSONObject: patch)
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
         if let auth { req.setValue("Basic " + Data(auth.utf8).base64EncodedString(), forHTTPHeaderField: "Authorization") }
         guard let (d, r) = try? await session.data(for: req), (200..<300).contains((r as? HTTPURLResponse)?.statusCode ?? 0) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: d)) ?? [:]  // PATCH 는 빈 응답일 수 있음
+        return (try? JSONSerialization.jsonObject(with: d)) ?? [:]  // PATCH·PUT 은 빈 응답일 수 있음
     }
 
     // 게임 중: (모드, 내 챔피언 영문 키, 한글 이름, 라인, 원본 — 골드·억제기 등 계산용)
@@ -57,7 +57,7 @@ enum League {
     }
 
     // 챔프 선택 중: (영문 키, 한글 이름, 라인, 지금 스펠 두 개). 챔피언을 아직 안 골랐으면 nil
-    static func champSelect() async -> (key: String, name: String, position: String, spells: [Int])? {
+    static func champSelect() async -> (key: String, name: String, position: String, spells: [Int], champId: Int)? {
         guard let (base, auth) = lcu() else { return nil }
         guard let s = await json(base + "/lol-champ-select/v1/session", auth: auth) as? [String: Any],
               let cell = s["localPlayerCellId"] as? Int,
@@ -66,7 +66,7 @@ enum League {
         guard id > 0, let champs = await json(base + "/lol-game-data/assets/v1/champion-summary.json", auth: auth) as? [[String: Any]],
               let c = champs.first(where: { $0["id"] as? Int == id }) else { return nil }
         let pos = ["top": "top", "jungle": "jungle", "middle": "mid", "bottom": "adc", "utility": "support"][me["assignedPosition"] as? String ?? ""] ?? ""
-        return (c["alias"] as? String ?? "", c["name"] as? String ?? "", pos, [me["spell1Id"] as? Int ?? 0, me["spell2Id"] as? Int ?? 0])
+        return (c["alias"] as? String ?? "", c["name"] as? String ?? "", pos, [me["spell1Id"] as? Int ?? 0, me["spell2Id"] as? Int ?? 0], id)
     }
 
     // 로딩 화면: 아직 라이브 클라이언트가 안 열려서 LCU 게임 정보에서 (아군 챔피언 id, 적 챔피언 번호)
@@ -134,7 +134,8 @@ enum League {
             let left = 300 - (time - t)
             guard left > 0 else { return nil }
             let team = n.contains("_T1_") == (myTeam == "ORDER") ? "아군" : "적"
-            let lane = n.contains("_L1") ? "탑" : n.contains("_C1") ? "미드" : "봇"
+            // 칼바람(맵 12)은 길이 하나라 라인 이름을 붙이지 않음
+            let lane = (all["gameData"] as? [String: Any])?["mapNumber"] as? Int == 12 ? "억제기" : n.contains("_L1") ? "탑" : n.contains("_C1") ? "미드" : "봇"
             return ("\(team) \(lane) \(Int(left) / 60):\(String(format: "%02d", Int(left) % 60))", left)
         }.sorted { $0.1 < $1.1 }.map(\.0)
         if !inhib.isEmpty { out.append("억제기  " + inhib.joined(separator: " · ")) }
@@ -149,7 +150,26 @@ enum League {
     // 내 스펠 바꾸기 (롤 클라이언트 공식 창구). 성공하면 true
     static func setSpells(_ s: [Int]) async -> Bool {
         guard s.count == 2, let (base, auth) = lcu() else { return false }
-        return await json(base + "/lol-champ-select/v1/session/my-selection", auth: auth, patch: ["spell1Id": s[0], "spell2Id": s[1]]) != nil
+        return await json(base + "/lol-champ-select/v1/session/my-selection", auth: auth, method: "PATCH", body: ["spell1Id": s[0], "spell2Id": s[1]]) != nil
+    }
+
+    // 추천 아이템 세트를 클라이언트 상점에 넣기. 사용자가 만든 세트는 그대로 두고 Riftsight 세트(uid riftsight-) 하나만 바꿈
+    static func setItemSet(champId: Int, map: Int, title: String, blocks: [(title: String, ids: [Int])]) async -> Bool {
+        guard !blocks.isEmpty, let (base, auth) = lcu(),
+              let sid = (await json(base + "/lol-summoner/v1/current-summoner", auth: auth) as? [String: Any])?["summonerId"] as? Int,
+              var all = await json(base + "/lol-item-sets/v1/item-sets/\(sid)/sets", auth: auth) as? [String: Any] else { return false }
+        all["itemSets"] = itemSets(all["itemSets"] as? [[String: Any]] ?? [], champId: champId, map: map, title: title, blocks: blocks)
+        return await json(base + "/lol-item-sets/v1/item-sets/\(sid)/sets", auth: auth, method: "PUT", body: all) != nil
+    }
+
+    static func itemSets(_ old: [[String: Any]], champId: Int, map: Int, title: String, blocks: [(title: String, ids: [Int])]) -> [[String: Any]] {
+        old.filter { !($0["uid"] as? String ?? "").hasPrefix("riftsight-") } + [[
+            "title": title, "type": "custom", "map": "any", "mode": "any", "startedFrom": "blank", "sortrank": 0,
+            "uid": "riftsight-\(champId)", "associatedChampions": [champId], "associatedMaps": [map], "preferredItemSlots": [] as [Any],
+            "blocks": blocks.map { b in
+                ["type": b.title, "hideIfSummonerSpell": "", "showIfSummonerSpell": "", "items": b.ids.map { ["id": "\($0)", "count": 1] }] as [String: Any]
+            },
+        ]]
     }
 
     // 추천 스펠을 넣되, 점멸은 지금 쓰던 칸(D/F)에 그대로 둔다
@@ -180,6 +200,9 @@ enum League {
         assert(g == Gold(blue: 800, red: 3500, lanes: [.init(blueKey: "Jinx", blueGold: 800, redKey: "Lux", redGold: 3500)]), "\(String(describing: g))")
         assert(lines == ["회복  적: 피바라기 · 아군 회복 감소: 처형인의 대검", "억제기  적 미드 1:40"], "\(lines)")
         assert(damageLine(mine: ["Jinx"], theirs: ["Lux"], { ["Jinx": (9, 4), "Lux": (2, 9)][$0] }) == "피해  아군 물리 69% 마법 31% · 적 물리 18% 마법 82%")
+        let sets = itemSets([["uid": "mine", "title": "내 세트"], ["uid": "riftsight-1", "title": "옛 세트"]], champId: 141, map: 12, title: "새", blocks: [("시작", [1055, 2003])])
+        assert(sets.count == 2 && sets[0]["uid"] as? String == "mine" && sets[1]["uid"] as? String == "riftsight-141", "itemSets keep user sets")
+        assert(((sets[1]["blocks"] as? [[String: Any]])?.first?["items"] as? [[String: Any]])?.first?["id"] as? String == "1055", "itemSets ids")
         print("League self-test OK")
     }
 }

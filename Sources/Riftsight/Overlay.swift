@@ -16,58 +16,14 @@ enum OV {
     static func pct(_ v: Double?) -> String { v.map { String(format: "%.1f%%", $0 * 100) } ?? "-" }
 }
 
+// 전체 화면 층(클릭은 게임으로 통과): 증강체 카드 위 띠만
 struct OverlayView: View {
     @ObservedObject var model: Model
-    @AppStorage("showPanel") var showPanel = true
-    @AppStorage("corner") var corner = "tl"
-    @AppStorage("opacity") var opacity = 0.7
     @AppStorage("scale") var scale = 1.0
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                if showPanel && (model.card != nil || !model.lines.isEmpty || model.tftDeck != nil) {
-                    let top = corner.hasPrefix("t"), left = corner.hasSuffix("l")
-                    VStack(alignment: .leading, spacing: 10 * scale) {
-                        if let c = model.card {
-                            Panel(title: "추천 빌드", scale: scale, opacity: opacity) { BuildPanel(info: c, scale: scale) }
-                            if let g = model.gold { Panel(title: "골드 비교", scale: scale, opacity: opacity) { GoldPanel(gold: g, scale: scale) } }
-                            if !model.info.isEmpty {
-                                Panel(title: "게임 정보", scale: scale, opacity: opacity) {
-                                    VStack(alignment: .leading, spacing: 6 * scale) {
-                                        ForEach(model.info, id: \.self) { Text($0).font(.system(size: 11 * scale, weight: .medium)) }
-                                    }
-                                }
-                            }
-                        } else {
-                            if let t = model.tftDeck {
-                                Panel(title: "덱 정보", scale: scale, opacity: opacity) {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 4 * scale) {
-                                            Text(t.name).font(.system(size: 12 * scale, weight: .bold))
-                                            DeckBadges(deck: t.deck, scale: scale)
-                                        }
-                                        Spacer()
-                                        Text(TFTBoard.label(t.stage)).font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(OV.teal)
-                                    }
-                                    TraitRow(traits: t.traits, size: 20 * scale)
-                                    TFTBoard(units: t.units, cell: 30 * scale)
-                                }
-                            }
-                            if !model.lines.isEmpty { Panel(title: model.lines.first ?? "", scale: scale, opacity: opacity) {
-                                VStack(alignment: .leading, spacing: 6 * scale) {
-                                    ForEach(Array(model.lines.dropFirst().enumerated()), id: \.offset) { Text($1).font(.system(size: 11 * scale, weight: .medium)) }
-                                }
-                            } }
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    // 위쪽은 게임 상단 정보, 아래쪽은 미니맵·상점을 피하도록 여백
-                    .padding(left ? .leading : .trailing, 16)
-                    .padding(top ? .top : .bottom, top ? 90 : 120)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: Alignment(horizontal: left ? .leading : .trailing, vertical: top ? .top : .bottom))
-                }
                 let best = model.augments.filter { ["S", "A"].contains($0.tier) }.min { $0.tier < $1.tier }
                 ForEach(model.augments) { a in
                     AugmentBand(hit: a, recommended: a.id == best?.id, scale: scale, width: geo.size.height * 0.29)
@@ -81,10 +37,89 @@ struct OverlayView: View {
     }
 }
 
-// 창 하나: 제목 줄 + 내용
+// 옮길 수 있는 정보 창들(따로 된 작은 창). 제목 줄을 끌면 이동, 첫 창 ≡ 로 설정
+struct PanelsView: View {
+    @ObservedObject var model: Model
+    @AppStorage("showPanel") var showPanel = true
+    @AppStorage("opacity") var opacity = 0.7
+    @AppStorage("scale") var scale = 1.0
+    @AppStorage("overlaySettingsOpen") var settingsOpen = false
+
+    var hasContent: Bool { model.card != nil || !model.lines.isEmpty || model.tftDeck != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10 * scale) {
+            if showPanel && hasContent {
+                if settingsOpen { Panel(title: "오버레이 설정", scale: scale, opacity: opacity, menu: true) { OverlaySettings(scale: scale) } }
+                let menu = !settingsOpen  // ≡ 는 맨 위 창에 하나만
+                if let c = model.card {
+                    Panel(title: "추천 빌드", scale: scale, opacity: opacity, menu: menu) { BuildPanel(info: c, scale: scale) }
+                    if let g = model.gold { Panel(title: "골드 비교", scale: scale, opacity: opacity) { GoldPanel(gold: g, scale: scale) } }
+                    if !model.info.isEmpty {
+                        Panel(title: "게임 정보", scale: scale, opacity: opacity) {
+                            VStack(alignment: .leading, spacing: 6 * scale) {
+                                ForEach(model.info, id: \.self) { Text($0).font(.system(size: 11 * scale, weight: .medium)) }
+                            }
+                        }
+                    }
+                } else {
+                    if let t = model.tftDeck {
+                        Panel(title: "덱 정보", scale: scale, opacity: opacity, menu: menu) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4 * scale) {
+                                    Text(t.name).font(.system(size: 12 * scale, weight: .bold))
+                                    DeckBadges(deck: t.deck, scale: scale)
+                                }
+                                Spacer()
+                                Text(TFTBoard.label(t.stage)).font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(OV.teal)
+                            }
+                            TraitRow(traits: t.traits, size: 20 * scale)
+                            TFTBoard(units: t.units, cell: 30 * scale)
+                        }
+                    }
+                    if !model.lines.isEmpty {
+                        Panel(title: model.lines.first ?? "", scale: scale, opacity: opacity, menu: menu && model.tftDeck == nil) {
+                            VStack(alignment: .leading, spacing: 6 * scale) {
+                                ForEach(Array(model.lines.dropFirst().enumerated()), id: \.offset) { Text($1).font(.system(size: 11 * scale, weight: .medium)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .foregroundStyle(.white)
+        .fixedSize()  // 창 크기를 내용에 맞춤
+    }
+}
+
+// 오버레이 안 설정: 켜고 끄기, 창·배지 보이기, 배경 진하기, 크기, 위치 처음으로
+struct OverlaySettings: View {
+    let scale: Double
+    @AppStorage("overlayOn") var overlayOn = true
+    @AppStorage("showAugments") var showAugments = true
+    @AppStorage("opacity") var opacity = 0.7
+    @AppStorage("scale") var scaleSetting = 1.0
+    var body: some View {
+        let s = CGFloat(scale)
+        VStack(alignment: .leading, spacing: 8 * s) {
+            Toggle("오버레이 켜기", isOn: $overlayOn)
+            Toggle("증강체 배지", isOn: $showAugments)
+            HStack { Text("배경 진하기").frame(width: 70 * s, alignment: .leading); Slider(value: $opacity, in: 0.2...1) }
+            HStack { Text("크기").frame(width: 70 * s, alignment: .leading); Slider(value: $scaleSetting, in: 0.7...1.4) }
+            Button("위치 처음으로") { (NSApp.delegate as? App)?.resetPanelPosition() }
+            Text("끈 오버레이는 메뉴바 ◈ 에서 다시 켤 수 있어요").font(.system(size: 10 * s)).foregroundStyle(OV.sub)
+        }
+        .font(.system(size: 11 * s, weight: .medium))
+        .toggleStyle(.switch).controlSize(.small)
+    }
+}
+
+// 창 하나: 제목 줄(끌면 오버레이 이동, menu 면 ≡ 설정 버튼) + 내용
 struct Panel<C: View>: View {
     let title: String, scale: Double, opacity: Double
+    var menu = false
     @ViewBuilder let content: C
+    @AppStorage("overlaySettingsOpen") var settingsOpen = false
     var s: CGFloat { CGFloat(scale) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10 * s) {
@@ -94,7 +129,18 @@ struct Panel<C: View>: View {
                     .background(OV.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
                     .overlay(RoundedRectangle(cornerRadius: 5).stroke(OV.teal.opacity(0.5)))
                 Text(title).font(.system(size: 14 * s, weight: .bold))
+                Spacer()
+                if menu {
+                    Button { settingsOpen.toggle() } label: {
+                        Text(settingsOpen ? "✕" : "≡").font(.system(size: 14 * s, weight: .bold)).foregroundStyle(OV.sub)
+                            .frame(width: 22 * s, height: 22 * s).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                }
             }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                .onChanged { _ in (NSApp.delegate as? App)?.dragPanel() }
+                .onEnded { _ in (NSApp.delegate as? App)?.endPanelDrag() })
             content
         }
         .padding(14 * s)

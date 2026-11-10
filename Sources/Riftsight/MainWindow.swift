@@ -373,7 +373,6 @@ struct SettingsView: View {
     @AppStorage("overlayOn") var overlayOn = true
     @AppStorage("showPanel") var showPanel = true
     @AppStorage("showAugments") var showAugments = true
-    @AppStorage("corner") var corner = "tl"
     @AppStorage("opacity") var opacity = 0.7
     @AppStorage("scale") var scale = 1.0
     var screenOK: Bool { CGPreflightScreenCaptureAccess() }  // 권한은 앱을 다시 켜야 반영돼서 매번 읽어도 됨
@@ -403,10 +402,12 @@ struct SettingsView: View {
                 }
 
                 card("모양") {
-                    Picker("패널 위치", selection: $corner) {
-                        Text("왼쪽 위").tag("tl"); Text("오른쪽 위").tag("tr")
-                        Text("왼쪽 아래").tag("bl"); Text("오른쪽 아래").tag("br")
-                    }.pickerStyle(.segmented)
+                    HStack {
+                        Text("오버레이 창 제목 줄을 끌어서 옮기고, 첫 창의 ≡ 로 게임 중에도 설정을 바꿀 수 있어요.")
+                            .font(.system(size: 12)).foregroundStyle(Theme.sub)
+                        Spacer()
+                        Button("위치 처음으로") { (NSApp.delegate as? App)?.resetPanelPosition() }
+                    }
                     HStack {
                         Text("패널 배경 진하기")
                         Slider(value: $opacity, in: 0.2...1)
