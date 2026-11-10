@@ -104,6 +104,7 @@ struct OverlayView: View {
     var buildCache: [String: (lines: [String], spells: [Int], data: [String: Any]?)] = [:]
     var spellsSetFor: String?  // 이 챔프 선택에서 스펠을 넣어 준 챔피언. 그 뒤 사용자가 바꾸면 덮어쓰지 않음
     var decks: [String]?
+    var rawDecks: [[String: Any]]?
     var champIds: [String: Int] = [:]
     var lolAugCache: [String: AugmentOCR.Keyed] = [:]
 
@@ -214,8 +215,15 @@ struct OverlayView: View {
                 if decks == nil { decks = await OPGG.metaDecks() }
                 model.card = nil
                 model.info = []
-                model.lines = decks ?? []
-                model.augments = scanAugments ? await AugmentOCR.scan(AugmentOCR.tft(), excluding: CGWindowID(window.windowNumber)) : []
+                if rawDecks == nil { rawDecks = await OPGG.rawMetaDecks(); await DDragon.shared.loadTFT() }
+                // 화면 한 번 읽어 증강체와 왼쪽 시너지 목록을 함께 찾는다
+                let lines = scanAugments ? await AugmentOCR.read(excluding: CGWindowID(window.windowNumber)) : []
+                let names = DDragon.shared.tftNames
+                // 시너지 줄은 "3 햇빛"·"햇빛 2/3" 처럼 숫자가 붙어 읽히므로 숫자·/ 를 빼고 이름과 정확히 같을 때만
+                let seen = Set(lines.compactMap { DDragon.shared.tftTraits[AugmentOCR.norm($0.0.filter { !$0.isNumber && $0 != "/" })] })
+                let advice = OPGG.closestDecks(seen: seen, decks: rawDecks ?? [], name: { names[$0] })
+                model.lines = advice.isEmpty ? (decks ?? []) : advice
+                model.augments = AugmentOCR.hits(AugmentOCR.tft(), lines)
             } else {
                 let b = await build(g.key, g.name, g.position)
                 model.lines = b.lines

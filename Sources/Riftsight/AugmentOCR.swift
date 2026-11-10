@@ -48,8 +48,16 @@ enum AugmentOCR {
     }
 
     static func scan(_ table: Keyed, excluding window: CGWindowID?) async -> [AugmentHit] {
-        guard !table.isEmpty,
-              let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true),
+        table.isEmpty ? [] : hits(table, await read(excluding: window))
+    }
+
+    static func hits(_ table: Keyed, _ lines: [(String, CGRect)]) -> [AugmentHit] {
+        lines.compactMap { text, box in match(text, in: table).map { AugmentHit(name: $0.0, tier: $0.1.tier, note: $0.1.note, box: box) } }
+    }
+
+    // 화면을 찍어 글자 줄과 위치(Vision 정규화 좌표)를 돌려준다. 증강체·TFT 시너지가 함께 씀
+    static func read(excluding window: CGWindowID?) async -> [(String, CGRect)] {
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true),
               let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else { return [] }
         let mine = content.windows.filter { $0.windowID == window }
         let cfg = SCStreamConfiguration()
@@ -58,14 +66,12 @@ enum AugmentOCR {
         guard let img = try? await SCScreenshotManager.captureImage(
             contentFilter: SCContentFilter(display: display, excludingWindows: mine), configuration: cfg) else { return [] }
 
+
         let req = VNRecognizeTextRequest()
         req.recognitionLanguages = ["ko-KR", "en-US"]
         req.recognitionLevel = .accurate
         try? VNImageRequestHandler(cgImage: img).perform([req])
-        return (req.results ?? []).compactMap { obs in
-            guard let text = obs.topCandidates(1).first?.string, let (name, e) = match(text, in: table) else { return nil }
-            return AugmentHit(name: name, tier: e.tier, note: e.note, box: obs.boundingBox)
-        }
+        return (req.results ?? []).compactMap { obs in obs.topCandidates(1).first.map { ($0.string, obs.boundingBox) } }
     }
 
     static func mergeTiers(_ old: String, _ augs: [(name: String, rarity: String)]) -> String {

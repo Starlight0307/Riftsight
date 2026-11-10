@@ -138,6 +138,22 @@ enum OPGG {
         return j["data"] as? [[String: Any]] ?? []
     }
 
+    // 화면에서 읽은 내 시너지와 메타 덱을 비교: 내 시너지 한 줄 + 가장 많이 겹치는 덱 2개
+    // shortcut: 시너지 이름만 비교(유닛 수·등급 무시), 화면 글자 인식이 시너지 목록을 놓치면 덱 추천도 빠짐
+    static func closestDecks(seen: Set<String>, decks: [[String: Any]], name: (String) -> String?) -> [String] {
+        guard !seen.isEmpty else { return [] }
+        let mine = seen.compactMap(name).sorted()
+        let scored = decks.map { d -> (deck: [String: Any], hit: Int, total: Int) in
+            let active = (d["traits"] as? [[String: Any]] ?? []).filter { ($0["style"] as? Int ?? 0) > 0 }.compactMap { $0["key"] as? String }
+            return (d, active.filter(seen.contains).count, active.count)
+        }.filter { $0.hit > 0 }.sorted { $0.hit > $1.hit }
+        return ["내 시너지  " + mine.joined(separator: ", ")] + scored.prefix(2).map { s in
+            let deckName = (s.deck["name"] as? [String: Any])?["ko_KR"] as? String ?? "?"
+            let core = (s.deck["units"] as? [[String: Any]] ?? []).filter { $0["isCore"] as? Bool == true }.compactMap { ($0["key"] as? String).flatMap(name) }
+            return "가까운 덱  \(deckName) (시너지 \(s.hit)/\(s.total))" + (core.isEmpty ? "" : " · 핵심 " + core.joined(separator: ", "))
+        }
+    }
+
     // TFT 메타 덱 상위 5개
     static func metaDecks() async -> [String] {
         let decks = await rawMetaDecks()
@@ -216,6 +232,14 @@ enum OPGG {
         LolGetChampionAnalysis(Data(Summary(AverageStats(0.51,1)),CoreItems(["악의","그림자\\"불꽃"],7105,3852),Runes("지배",["감전","피의 맛"])))
         """
         assert(grades([70, 90, 80, 60, 50, 85, 75, 65, 55, 95]) == ["B", "S", "A", "C", "D", "A", "B", "C", "D", "S"], "grades")
+        let decks: [[String: Any]] = [
+            ["name": ["ko_KR": "햇빛 유나라"], "traits": [["key": "S", "style": 4], ["key": "E", "style": 1], ["key": "X", "style": 0]],
+             "units": [["key": "U", "isCore": true], ["key": "V", "isCore": false]]],
+            ["name": ["ko_KR": "다른 덱"], "traits": [["key": "Z", "style": 2]], "units": []],
+        ]
+        let names = ["S": "햇빛", "E": "처형자", "X": "엉뚱", "U": "유나라"]
+        assert(closestDecks(seen: ["S", "X"], decks: decks, name: { names[$0] }) == ["내 시너지  엉뚱, 햇빛", "가까운 덱  햇빛 유나라 (시너지 1/2) · 핵심 유나라"], "closestDecks")
+        assert(closestDecks(seen: [], decks: decks, name: { names[$0] }).isEmpty)
         let d = (parse(sample) as? [String: Any])?["data"] as? [String: Any]
         let core = (d?["core_items"] as? [String: Any])?["ids_names"] as? [String]
         assert(core == ["악의", "그림자\"불꽃"], "core items")

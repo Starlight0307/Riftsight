@@ -70,6 +70,8 @@ import Foundation
 
     // TFT 유닛 키(DA_18_Maokai) → Community Dragon 유닛 그림. OP.GG 키와 이름이 같다
     private var tftIcons: [String: URL] = [:]
+    private(set) var tftNames: [String: String] = [:]  // TFT 유닛·시너지 키(DA_18_Solar) → 한글 이름(햇빛)
+    private(set) var tftTraits: [String: String] = [:] // 공백 뺀 한글 시너지 이름 → 키 (화면 글자와 맞추기용)
     func tftUnit(_ key: String) -> URL? { tftIcons[key] }
 
     // 원본이 24MB 라 하루 한 번만 받아 Application Support 에 캐시
@@ -90,7 +92,14 @@ import Foundation
         guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               let sets = j["sets"] as? [String: [String: Any]] else { return }
         var out: [String: URL] = [:]
-        for set in sets.values {
+        // 숫자 순서로 돌아 같은 이름이면 최신 시즌 키가 남게 한다
+        for set in sets.sorted(by: { (Int($0.key) ?? 0) < (Int($1.key) ?? 0) }).map(\.value) {
+            for t in set["traits"] as? [[String: Any]] ?? [] {
+                if let k = t["apiName"] as? String, let n = t["name"] as? String { tftNames[k] = n; tftTraits[AugmentOCR.norm(n)] = k }
+            }
+            for c in set["champions"] as? [[String: Any]] ?? [] {
+                if let k = c["apiName"] as? String, let n = c["name"] as? String { tftNames[k] = n }
+            }
             for c in set["champions"] as? [[String: Any]] ?? [] {
                 guard let k = c["apiName"] as? String, let tile = c["tileIcon"] as? String, !tile.isEmpty else { continue }
                 out[k] = URL(string: "https://raw.communitydragon.org/latest/game/" + tile.lowercased().replacingOccurrences(of: ".tex", with: ".png"))
