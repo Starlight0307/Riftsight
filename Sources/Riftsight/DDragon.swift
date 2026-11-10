@@ -9,17 +9,29 @@ import Foundation
     private var items: [String: String] = [:]   // 한글 이름 → 이미지 파일
     private var runes: [String: String] = [:]   // 한글 이름 → 아이콘 경로
     private var spells: [Int: String] = [:]     // 소환사 주문 번호(4=점멸) → 이미지 파일
+    private(set) var itemInfo: [Int: (name: String, gold: Int, heal: Bool, antiHeal: Bool)] = [:]  // 아이템 번호 → 골드 비교·회복 정보용
+    private(set) var champInfo: [String: (ad: Int, ap: Int)] = [:]  // 영문 id → 공식 공격·마법 점수(1~10)
+    private(set) var champIdByKey: [Int: String] = [:]               // 챔피언 번호(222) → 영문 id(Jinx)
 
     func load() async {
         guard !ready, let v = (await get("https://ddragon.leagueoflegends.com/api/versions.json") as? [String])?.first else { return }
         version = v
         let base = "https://ddragon.leagueoflegends.com/cdn/\(v)/data/ko_KR"
         if let c = (await get(base + "/champion.json") as? [String: Any])?["data"] as? [String: [String: Any]] {
-            for (id, info) in c { if let n = info["name"] as? String { champs[n] = id } }
+            for (id, info) in c {
+                if let n = info["name"] as? String { champs[n] = id }
+                if let k = (info["key"] as? String).flatMap(Int.init) { champIdByKey[k] = id }
+                if let i = info["info"] as? [String: Int] { champInfo[id] = (i["attack"] ?? 0, i["magic"] ?? 0) }
+            }
         }
         if let i = (await get(base + "/item.json") as? [String: Any])?["data"] as? [String: [String: Any]] {
-            for info in i.values {
+            for (id, info) in i {
                 if let n = info["name"] as? String, let f = (info["image"] as? [String: Any])?["full"] as? String { items[n] = f }
+                if let k = Int(id), let n = info["name"] as? String {
+                    let tags = Set(info["tags"] as? [String] ?? [])
+                    itemInfo[k] = (n, (info["gold"] as? [String: Any])?["total"] as? Int ?? 0, !tags.isDisjoint(with: ["LifeSteal", "SpellVamp"]),
+                                   (info["description"] as? String ?? "").contains("고통스러운 상처"))
+                }
             }
         }
         if let trees = await get(base + "/runesReforged.json") as? [[String: Any]] {

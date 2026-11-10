@@ -13,6 +13,7 @@ if CommandLine.arguments.contains("--selftest") {
     @Published var lines: [String] = []
     @Published var augments: [AugmentHit] = []
     @Published var card: BuildCard.Info?  // 롤 빌드가 있으면 글줄 대신 아이콘 카드로
+    @Published var info: [String] = []    // 카드 아래 게임 정보(골드·회복·억제기·피해 유형)
 }
 
 // 설정 화면(SettingsView)과 오버레이가 함께 쓰는 값. UserDefaults 에 저장돼 다시 켜도 유지
@@ -36,7 +37,15 @@ struct OverlayView: View {
                 if showPanel && (model.card != nil || !model.lines.isEmpty) {
                     let top = corner.hasPrefix("t"), left = corner.hasSuffix("l")
                     Group {
-                        if let c = model.card { BuildCard(info: c, scale: scale) }
+                        if let c = model.card {
+                            VStack(alignment: .leading, spacing: 8 * scale) {
+                                BuildCard(info: c, scale: scale)
+                                if !model.info.isEmpty {
+                                    Divider().overlay(Theme.line)
+                                    ForEach(model.info, id: \.self) { Text($0).font(.system(size: 11 * scale, weight: .medium)) }
+                                }
+                            }
+                        }
                         else {
                             VStack(alignment: .leading, spacing: 4 * scale) {
                                 ForEach(Array(model.lines.enumerated()), id: \.offset) { i, l in
@@ -204,27 +213,38 @@ struct OverlayView: View {
             if g.mode == "TFT" {
                 if decks == nil { decks = await OPGG.metaDecks() }
                 model.card = nil
+                model.info = []
                 model.lines = decks ?? []
                 model.augments = scanAugments ? await AugmentOCR.scan(AugmentOCR.tft(), excluding: CGWindowID(window.windowNumber)) : []
             } else {
                 let b = await build(g.key, g.name, g.position)
                 model.lines = b.lines
                 model.card = b.data.map { .init(key: g.key, name: g.name, position: g.position, data: $0) }
+                let dd = DDragon.shared
+                model.info = League.info(g.all, item: { dd.itemInfo[$0] }, champ: { dd.champInfo[$0] })
                 // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만
                 model.augments = scanAugments && g.mode != "CLASSIC"
                     ? await AugmentOCR.scan(await lolAugments(g.key), excluding: CGWindowID(window.windowNumber)) : []
             }
+        } else if let l = await League.loading() {
+            let dd = DDragon.shared
+            func keys(_ ids: [Int]) -> [String] { ids.compactMap { dd.champIdByKey[$0] } }
+            model.card = nil
+            model.augments = []
+            model.lines = ["로딩 중", League.damageLine(mine: keys(l.mine), theirs: keys(l.theirs), { dd.champInfo[$0] })]
         } else if let c = await League.champSelect() {
             model.augments = []
             let b = await build(c.key, c.name, c.position)
             model.lines = b.lines
             model.card = b.data.map { .init(key: c.key, name: c.name, position: c.position, data: $0) }
+            model.info = []
             if spellsSetFor != c.key, b.spells.count == 2, await League.setSpells(League.arrange(b.spells, current: c.spells)) {
                 spellsSetFor = c.key
             }
         } else {
             spellsSetFor = nil  // 다음 판 챔프 선택에서 다시 넣도록
             model.card = nil
+            model.info = []
             model.lines = []
             model.augments = []
         }

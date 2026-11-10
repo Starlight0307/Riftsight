@@ -36,16 +36,16 @@ enum League {
         return (try? JSONSerialization.jsonObject(with: d)) ?? [:]  // PATCH 는 빈 응답일 수 있음
     }
 
-    // 게임 중: (모드, 내 챔피언 영문 키, 한글 이름, 라인)
-    static func liveGame() async -> (mode: String, key: String, name: String, position: String)? {
+    // 게임 중: (모드, 내 챔피언 영문 키, 한글 이름, 라인, 원본 — 골드·억제기 등 계산용)
+    static func liveGame() async -> (mode: String, key: String, name: String, position: String, all: [String: Any])? {
         guard let all = await json("https://127.0.0.1:2999/liveclientdata/allgamedata") as? [String: Any],
               let mode = (all["gameData"] as? [String: Any])?["gameMode"] as? String else { return nil }
         let me = (all["activePlayer"] as? [String: Any])?["riotId"] as? String
         let players = all["allPlayers"] as? [[String: Any]] ?? []
-        guard let p = players.first(where: { $0["riotId"] as? String == me }) ?? players.first else { return (mode, "", "", "") }
+        guard let p = players.first(where: { $0["riotId"] as? String == me }) ?? players.first else { return (mode, "", "", "", all) }
         let raw = (p["rawChampionName"] as? String ?? "").replacingOccurrences(of: "game_character_displayname_", with: "")
         let pos = ["TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "adc", "UTILITY": "support"][p["position"] as? String ?? ""] ?? ""
-        return (mode, raw, p["championName"] as? String ?? raw, pos)
+        return (mode, raw, p["championName"] as? String ?? raw, pos, all)
     }
 
     // LCU 주소와 비밀번호 (클라이언트가 켜질 때마다 바뀜)
@@ -69,6 +69,72 @@ enum League {
         return (c["alias"] as? String ?? "", c["name"] as? String ?? "", pos, [me["spell1Id"] as? Int ?? 0, me["spell2Id"] as? Int ?? 0])
     }
 
+    // 로딩 화면: 아직 라이브 클라이언트가 안 열려서 LCU 게임 정보에서 (아군 챔피언 id, 적 챔피언 번호)
+    static func loading() async -> (mine: [Int], theirs: [Int])? {
+        guard let (base, auth) = lcu(),
+              let g = await json(base + "/lol-gameflow/v1/session", auth: auth) as? [String: Any], g["phase"] as? String == "InProgress",
+              let data = g["gameData"] as? [String: Any],
+              let me = (await json(base + "/lol-summoner/v1/current-summoner", auth: auth) as? [String: Any])?["puuid"] as? String else { return nil }
+        let one = data["teamOne"] as? [[String: Any]] ?? [], two = data["teamTwo"] as? [[String: Any]] ?? []
+        func ids(_ t: [[String: Any]]) -> [Int] { t.compactMap { $0["championId"] as? Int } }
+        return one.contains { $0["puuid"] as? String == me } ? (ids(one), ids(two)) : (ids(two), ids(one))
+    }
+
+    // 피해 유형 한 줄: 공식 공격·마법 점수로 팀별 물리 비율 추정
+    static func damageLine(mine: [String], theirs: [String], _ info: (String) -> (ad: Int, ap: Int)?) -> String {
+        func ad(_ t: [String]) -> Int {
+            let s = t.compactMap(info).reduce((0, 0)) { ($0.0 + $1.ad, $0.1 + $1.ap) }
+            return s.0 + s.1 == 0 ? 0 : s.0 * 100 / (s.0 + s.1)
+        }
+        let a = ad(mine), b = ad(theirs)
+        return "피해  아군 물리 \(a)% 마법 \(100 - a)% · 적 물리 \(b)% 마법 \(100 - b)%"
+    }
+
+    // 게임 중 정보 줄: 아이템 골드 비교, 회복·회복 감소, 억제기 타이머, (초반) 피해 유형
+    typealias Item = (name: String, gold: Int, heal: Bool, antiHeal: Bool)
+    static func info(_ all: [String: Any], item: (Int) -> Item?, champ: (String) -> (ad: Int, ap: Int)?) -> [String] {
+        let me = (all["activePlayer"] as? [String: Any])?["riotId"] as? String
+        let players = all["allPlayers"] as? [[String: Any]] ?? []
+        guard let myTeam = players.first(where: { $0["riotId"] as? String == me })?["team"] as? String else { return [] }
+        let time = (all["gameData"] as? [String: Any])?["gameTime"] as? Double ?? 0
+        let mine = players.filter { $0["team"] as? String == myTeam }, theirs = players.filter { $0["team"] as? String != myTeam }
+        func items(_ t: [[String: Any]]) -> [(Item, Int)] {
+            t.flatMap { $0["items"] as? [[String: Any]] ?? [] }.compactMap { i in
+                (i["itemID"] as? Int).flatMap(item).map { ($0, i["count"] as? Int ?? 1) }
+            }
+        }
+        func gold(_ t: [[String: Any]]) -> Int { items(t).reduce(0) { $0 + $1.0.gold * $1.1 } }
+        func k(_ g: Int) -> String { String(format: "%.1fk", Double(g) / 1000) }
+        let a = gold(mine), b = gold(theirs)
+        var out = ["골드  아군 \(k(a)) · 적 \(k(b)) (\(a >= b ? "+" : "-")\(k(abs(a - b))))"]
+
+        func uniq(_ xs: [String]) -> String { xs.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: ", ") }
+        let heal = uniq(items(theirs).filter { $0.0.heal }.map { $0.0.name })
+        let anti = uniq(items(mine).filter { $0.0.antiHeal }.map { $0.0.name })
+        if !heal.isEmpty || !anti.isEmpty { out.append("회복  적: \(heal.isEmpty ? "없음" : heal) · 아군 회복 감소: \(anti.isEmpty ? "없음" : anti)") }
+
+        // 억제기는 5분 뒤 다시 생김. 이름 예: Barracks_T2_C1 (T1=블루 ORDER, L1 탑 C1 미드 R1 봇)
+        var down: [String: Double] = [:]
+        for e in (all["events"] as? [String: Any])?["Events"] as? [[String: Any]] ?? [] {
+            if e["EventName"] as? String == "InhibKilled", let n = e["InhibKilled"] as? String, let t = e["EventTime"] as? Double { down[n] = t }
+            if e["EventName"] as? String == "InhibRespawned", let n = e["InhibRespawned"] as? String { down[n] = nil }
+        }
+        let inhib = down.compactMap { n, t -> (String, Double)? in
+            let left = 300 - (time - t)
+            guard left > 0 else { return nil }
+            let team = n.contains("_T1_") == (myTeam == "ORDER") ? "아군" : "적"
+            let lane = n.contains("_L1") ? "탑" : n.contains("_C1") ? "미드" : "봇"
+            return ("\(team) \(lane) \(Int(left) / 60):\(String(format: "%02d", Int(left) % 60))", left)
+        }.sorted { $0.1 < $1.1 }.map(\.0)
+        if !inhib.isEmpty { out.append("억제기  " + inhib.joined(separator: " · ")) }
+
+        if time < 90 {
+            func keys(_ t: [[String: Any]]) -> [String] { t.compactMap { ($0["rawChampionName"] as? String)?.replacingOccurrences(of: "game_character_displayname_", with: "") } }
+            out.append(damageLine(mine: keys(mine), theirs: keys(theirs), champ))
+        }
+        return out
+    }
+
     // 내 스펠 바꾸기 (롤 클라이언트 공식 창구). 성공하면 true
     static func setSpells(_ s: [Int]) async -> Bool {
         guard s.count == 2, let (base, auth) = lcu() else { return false }
@@ -86,6 +152,22 @@ enum League {
         assert(arrange([4, 14], current: [4, 7]) == [4, 14], "flash already on D")
         assert(arrange([6, 14], current: [7, 4]) == [6, 14], "no flash recommended")
         assert(arrange([4, 6], current: [7, 3]) == [4, 6], "no flash now")
+        let all: [String: Any] = [
+            "activePlayer": ["riotId": "나#KR1"],
+            "gameData": ["gameTime": 400.0],
+            "allPlayers": [
+                ["riotId": "나#KR1", "team": "ORDER", "rawChampionName": "game_character_displayname_Jinx", "items": [["itemID": 3123, "count": 1]]],
+                ["riotId": "적#KR1", "team": "CHAOS", "rawChampionName": "game_character_displayname_Lux", "items": [["itemID": 3072, "count": 1], ["itemID": 2003, "count": 2]]],
+            ],
+            "events": ["Events": [
+                ["EventName": "InhibKilled", "InhibKilled": "Barracks_T2_C1", "EventTime": 200.0],
+                ["EventName": "InhibKilled", "InhibKilled": "Barracks_T1_L1", "EventTime": 50.0],
+            ]],
+        ]
+        let items: [Int: Item] = [3123: ("처형인의 대검", 800, false, true), 3072: ("피바라기", 3400, true, false), 2003: ("체력 물약", 50, false, false)]
+        let lines = info(all, item: { items[$0] }, champ: { ["Jinx": (9, 4), "Lux": (2, 9)][$0] })
+        assert(lines == ["골드  아군 0.8k · 적 3.5k (-2.7k)", "회복  적: 피바라기 · 아군 회복 감소: 처형인의 대검", "억제기  적 미드 1:40"], "\(lines)")
+        assert(damageLine(mine: ["Jinx"], theirs: ["Lux"], { ["Jinx": (9, 4), "Lux": (2, 9)][$0] }) == "피해  아군 물리 69% 마법 31% · 적 물리 18% 마법 82%")
         print("League self-test OK")
     }
 }
