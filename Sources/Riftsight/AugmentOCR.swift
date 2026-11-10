@@ -6,11 +6,12 @@ import Vision
 struct AugmentHit: Identifiable {
     let id = UUID()
     let name: String, tier: String, note: String
+    var blurb = "", icon: URL? = nil  // 한 줄 평("안정적인 선택")·아이콘 (롤만)
     let box: CGRect  // Vision 정규화 좌표 (원점 왼쪽 아래)
 }
 
 enum AugmentOCR {
-    struct Entry { let tier: String; let note: String }
+    struct Entry { let tier: String; let note: String; var blurb = ""; var icon: URL? = nil }
     typealias Keyed = [String: (String, Entry)]
 
     // TFT 증강체 성적은 공개 데이터가 없어 사용자가 직접 채우는 등급표를 쓴다 (메뉴 → TFT 등급표 열기)
@@ -52,7 +53,7 @@ enum AugmentOCR {
     }
 
     static func hits(_ table: Keyed, _ lines: [(String, CGRect)]) -> [AugmentHit] {
-        lines.compactMap { text, box in match(text, in: table).map { AugmentHit(name: $0.0, tier: $0.1.tier, note: $0.1.note, box: box) } }
+        lines.compactMap { text, box in match(text, in: table).map { AugmentHit(name: $0.0, tier: $0.1.tier, note: $0.1.note, blurb: $0.1.blurb, icon: $0.1.icon, box: box) } }
     }
 
     // 화면을 찍어 글자 줄과 위치(Vision 정규화 좌표)를 돌려준다. 증강체·TFT 시너지가 함께 씀

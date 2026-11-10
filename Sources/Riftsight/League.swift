@@ -90,12 +90,19 @@ enum League {
         return "피해  아군 물리 \(a)% 마법 \(100 - a)% · 적 물리 \(b)% 마법 \(100 - b)%"
     }
 
-    // 게임 중 정보 줄: 아이템 골드 비교, 회복·회복 감소, 억제기 타이머, (초반) 피해 유형
+    // 골드 비교 창: 블루(ORDER)·레드 팀 아이템 골드와 라인별(같은 라인끼리, 라인 없으면 순서대로) 짝
+    struct Gold: Equatable {
+        var blue = 0, red = 0
+        var lanes: [Lane] = []
+        struct Lane: Equatable { let blueKey: String, blueGold: Int, redKey: String, redGold: Int }
+    }
+
+    // 게임 중 정보: 골드 비교 + 줄(회복·회복 감소, 억제기 타이머, 초반 피해 유형)
     typealias Item = (name: String, gold: Int, heal: Bool, antiHeal: Bool)
-    static func info(_ all: [String: Any], item: (Int) -> Item?, champ: (String) -> (ad: Int, ap: Int)?) -> [String] {
+    static func info(_ all: [String: Any], item: (Int) -> Item?, champ: (String) -> (ad: Int, ap: Int)?) -> (gold: Gold?, lines: [String]) {
         let me = (all["activePlayer"] as? [String: Any])?["riotId"] as? String
         let players = all["allPlayers"] as? [[String: Any]] ?? []
-        guard let myTeam = players.first(where: { $0["riotId"] as? String == me })?["team"] as? String else { return [] }
+        guard let myTeam = players.first(where: { $0["riotId"] as? String == me })?["team"] as? String else { return (nil, []) }
         let time = (all["gameData"] as? [String: Any])?["gameTime"] as? Double ?? 0
         let mine = players.filter { $0["team"] as? String == myTeam }, theirs = players.filter { $0["team"] as? String != myTeam }
         func items(_ t: [[String: Any]]) -> [(Item, Int)] {
@@ -104,9 +111,13 @@ enum League {
             }
         }
         func gold(_ t: [[String: Any]]) -> Int { items(t).reduce(0) { $0 + $1.0.gold * $1.1 } }
-        func k(_ g: Int) -> String { String(format: "%.1fk", Double(g) / 1000) }
-        let a = gold(mine), b = gold(theirs)
-        var out = ["골드  아군 \(k(a)) · 적 \(k(b)) (\(a >= b ? "+" : "-")\(k(abs(a - b))))"]
+        func key(_ p: [String: Any]) -> String { (p["rawChampionName"] as? String ?? "").replacingOccurrences(of: "game_character_displayname_", with: "") }
+        let order = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
+        func lane(_ t: [[String: Any]]) -> [[String: Any]] { t.sorted { (order.firstIndex(of: $0["position"] as? String ?? "") ?? 9) < (order.firstIndex(of: $1["position"] as? String ?? "") ?? 9) } }
+        let blue = lane(players.filter { $0["team"] as? String == "ORDER" }), red = lane(players.filter { $0["team"] as? String != "ORDER" })
+        var g = Gold(blue: gold(blue), red: gold(red))
+        g.lanes = zip(blue, red).map { Gold.Lane(blueKey: key($0), blueGold: gold([$0]), redKey: key($1), redGold: gold([$1])) }
+        var out: [String] = []
 
         func uniq(_ xs: [String]) -> String { xs.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: ", ") }
         let heal = uniq(items(theirs).filter { $0.0.heal }.map { $0.0.name })
@@ -132,7 +143,7 @@ enum League {
             func keys(_ t: [[String: Any]]) -> [String] { t.compactMap { ($0["rawChampionName"] as? String)?.replacingOccurrences(of: "game_character_displayname_", with: "") } }
             out.append(damageLine(mine: keys(mine), theirs: keys(theirs), champ))
         }
-        return out
+        return (g, out)
     }
 
     // 내 스펠 바꾸기 (롤 클라이언트 공식 창구). 성공하면 true
@@ -165,8 +176,9 @@ enum League {
             ]],
         ]
         let items: [Int: Item] = [3123: ("처형인의 대검", 800, false, true), 3072: ("피바라기", 3400, true, false), 2003: ("체력 물약", 50, false, false)]
-        let lines = info(all, item: { items[$0] }, champ: { ["Jinx": (9, 4), "Lux": (2, 9)][$0] })
-        assert(lines == ["골드  아군 0.8k · 적 3.5k (-2.7k)", "회복  적: 피바라기 · 아군 회복 감소: 처형인의 대검", "억제기  적 미드 1:40"], "\(lines)")
+        let (g, lines) = info(all, item: { items[$0] }, champ: { ["Jinx": (9, 4), "Lux": (2, 9)][$0] })
+        assert(g == Gold(blue: 800, red: 3500, lanes: [.init(blueKey: "Jinx", blueGold: 800, redKey: "Lux", redGold: 3500)]), "\(String(describing: g))")
+        assert(lines == ["회복  적: 피바라기 · 아군 회복 감소: 처형인의 대검", "억제기  적 미드 1:40"], "\(lines)")
         assert(damageLine(mine: ["Jinx"], theirs: ["Lux"], { ["Jinx": (9, 4), "Lux": (2, 9)][$0] }) == "피해  아군 물리 69% 마법 31% · 적 물리 18% 마법 82%")
         print("League self-test OK")
     }

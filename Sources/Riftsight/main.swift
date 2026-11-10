@@ -12,8 +12,9 @@ if CommandLine.arguments.contains("--selftest") {
 @MainActor final class Model: ObservableObject {
     @Published var lines: [String] = []
     @Published var augments: [AugmentHit] = []
-    @Published var card: BuildCard.Info?  // 롤 빌드가 있으면 글줄 대신 아이콘 카드로
-    @Published var info: [String] = []    // 카드 아래 게임 정보(골드·회복·억제기·피해 유형)
+    @Published var card: BuildPanel.Info?  // 롤 빌드가 있으면 글줄 대신 빌드·골드·정보 창으로
+    @Published var gold: League.Gold?
+    @Published var info: [String] = []     // 게임 정보 창 줄(회복·억제기·피해 유형)
 }
 
 // 설정 화면(SettingsView)과 오버레이가 함께 쓰는 값. UserDefaults 에 저장돼 다시 켜도 유지
@@ -22,76 +23,6 @@ enum Pref {
         "overlayOn": true, "showPanel": true, "showAugments": true,
         "corner": "tl", "opacity": 0.7, "scale": 1.0,
     ]
-}
-
-struct OverlayView: View {
-    @ObservedObject var model: Model
-    @AppStorage("showPanel") var showPanel = true
-    @AppStorage("corner") var corner = "tl"
-    @AppStorage("opacity") var opacity = 0.7
-    @AppStorage("scale") var scale = 1.0
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                if showPanel && (model.card != nil || !model.lines.isEmpty) {
-                    let top = corner.hasPrefix("t"), left = corner.hasSuffix("l")
-                    Group {
-                        if let c = model.card {
-                            VStack(alignment: .leading, spacing: 8 * scale) {
-                                BuildCard(info: c, scale: scale)
-                                if !model.info.isEmpty {
-                                    Divider().overlay(Theme.line)
-                                    ForEach(model.info, id: \.self) { Text($0).font(.system(size: 11 * scale, weight: .medium)) }
-                                }
-                            }
-                        }
-                        else {
-                            VStack(alignment: .leading, spacing: 4 * scale) {
-                                ForEach(Array(model.lines.enumerated()), id: \.offset) { i, l in
-                                    Text(l).font(.system(size: (i == 0 ? 14 : 12) * scale, weight: i == 0 ? .bold : .regular))
-                                }
-                            }
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .padding(12 * scale)
-                    .background(Theme.bg.opacity(opacity), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
-                    .frame(maxWidth: 420 * scale, alignment: .leading)
-                    // 위쪽은 게임 상단 정보, 아래쪽은 미니맵·상점을 피하도록 여백
-                    .padding(left ? .leading : .trailing, 16)
-                    .padding(top ? .top : .bottom, top ? 90 : 120)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: Alignment(horizontal: left ? .leading : .trailing, vertical: top ? .top : .bottom))
-                }
-                // 증강체 이름 바로 위에 등급 배지
-                ForEach(model.augments) { a in
-                    HStack(spacing: 6 * scale) {
-                        Text(a.tier.count == 1 ? a.tier : "?")
-                            .font(.system(size: 15 * scale, weight: .heavy)).foregroundStyle(.white)
-                            .frame(width: 24 * scale, height: 24 * scale)
-                            .background(grade(a.tier), in: RoundedRectangle(cornerRadius: 5))
-                        Text(a.tier.count == 1 ? a.note : "\(a.note) · 자료 없음").font(.system(size: 12 * scale, weight: .bold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.leading, 4 * scale).padding(.trailing, 10 * scale).padding(.vertical, 4 * scale)
-                    .background(Theme.bg.opacity(0.92), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(rarity(a), lineWidth: 1.5))
-                    .position(x: a.box.midX * geo.size.width, y: (1 - a.box.maxY) * geo.size.height - 20 * scale)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-    }
-
-    // 테두리는 희귀도, 네모 칸은 등급 색
-    func rarity(_ a: AugmentHit) -> Color {
-        ["프리즘": .purple, "골드": .yellow, "실버": Color(white: 0.8)][a.note] ?? Theme.line
-    }
-    func grade(_ t: String) -> Color {
-        ["S": Color(red: 0.91, green: 0.25, blue: 0.34), "A": .orange, "B": Theme.accent, "C": Theme.tier(1), "D": .gray][t] ?? Color(white: 0.3)
-    }
 }
 
 @MainActor final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -215,6 +146,7 @@ struct OverlayView: View {
                 if decks == nil { decks = await OPGG.metaDecks() }
                 model.card = nil
                 model.info = []
+                model.gold = nil
                 if rawDecks == nil { rawDecks = await OPGG.rawMetaDecks(); await DDragon.shared.loadTFT() }
                 // 화면 한 번 읽어 증강체와 왼쪽 시너지 목록을 함께 찾는다
                 let lines = scanAugments ? await AugmentOCR.read(excluding: CGWindowID(window.windowNumber)) : []
@@ -229,7 +161,7 @@ struct OverlayView: View {
                 model.lines = b.lines
                 model.card = b.data.map { .init(key: g.key, name: g.name, position: g.position, data: $0) }
                 let dd = DDragon.shared
-                model.info = League.info(g.all, item: { dd.itemInfo[$0] }, champ: { dd.champInfo[$0] })
+                (model.gold, model.info) = League.info(g.all, item: { dd.itemInfo[$0] }, champ: { dd.champInfo[$0] })
                 // 소환사의 협곡(CLASSIC)엔 증강체가 없으니 화면 읽기는 그 밖의 모드(무작위 총력전 등)에서만
                 model.augments = scanAugments && g.mode != "CLASSIC"
                     ? await AugmentOCR.scan(await lolAugments(g.key), excluding: CGWindowID(window.windowNumber)) : []
@@ -246,6 +178,7 @@ struct OverlayView: View {
             model.lines = b.lines
             model.card = b.data.map { .init(key: c.key, name: c.name, position: c.position, data: $0) }
             model.info = []
+            model.gold = nil
             if spellsSetFor != c.key, b.spells.count == 2, await League.setSpells(League.arrange(b.spells, current: c.spells)) {
                 spellsSetFor = c.key
             }
@@ -253,6 +186,7 @@ struct OverlayView: View {
             spellsSetFor = nil  // 다음 판 챔프 선택에서 다시 넣도록
             model.card = nil
             model.info = []
+            model.gold = nil
             model.lines = []
             model.augments = []
         }

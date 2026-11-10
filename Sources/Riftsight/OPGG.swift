@@ -26,6 +26,7 @@ enum OPGG {
             "champion": key.uppercased(), "lang": "ko_KR",
             "desired_output_fields": [
                 "data.summary.average_stats.{win_rate,tier,rank}",
+                "data.core_items.{pick_rate,play,win}", "data.fourth_items[].{ids_names[],pick_rate,play,win}", "data.skill_masteries.{ids[]}",
                 "data.runes.{primary_page_name,primary_rune_names[],secondary_page_name,secondary_rune_names[]}",
                 "data.starter_items.{ids_names[]}", "data.core_items.{ids_names[]}",
                 "data.boots.{ids_names[]}", "data.skills.{order[]}", "data.summoner_spells.{ids_names[]}",
@@ -71,16 +72,30 @@ enum OPGG {
     // 롤 증강체(무작위 총력전) 챔피언별 S~D 등급 + 희귀도
     static func lolAugments(championId: Int) async -> [String: AugmentOCR.Entry] {
         guard let text = await call("lol_list_aram_augments", [
-            "champion_id": championId, "lang": "ko_KR", "desired_output_fields": ["data.augments[].{name,performance}"],
+            "champion_id": championId, "lang": "ko_KR", "desired_output_fields": ["data.augments[].{name,performance,popular}"],
         ]), let list = ((parse(text) as? [String: Any])?["data"] as? [String: Any])?["augments"] as? [[String: Any]] else { return [:] }
         let rarity = await rarities()
-        let scored = list.compactMap { a in (a["name"] as? String).flatMap { n in (a["performance"] as? Double).map { (n, $0) } } }
+        let scored = list.compactMap { a in (a["name"] as? String).flatMap { n in (a["performance"] as? Double).map { (n, $0, a["popular"] as? Double ?? 0) } } }
         let g = grades(scored.map(\.1))
-        let graded = Dictionary(zip(scored, g).map { s, t in (s.0, AugmentOCR.Entry(tier: t, note: rarity[s.0] ?? "")) },
-                                uniquingKeysWith: { a, _ in a })
+        let pops = scored.map(\.2).sorted()
+        let median = pops.isEmpty ? 0 : pops[pops.count / 2]
+        let graded = Dictionary(zip(scored, g).map { s, t in
+            (s.0, AugmentOCR.Entry(tier: t, note: rarity[s.0]?.rarity ?? "", blurb: blurb(t, popular: s.2 >= median), icon: rarity[s.0]?.icon))
+        }, uniquingKeysWith: { a, _ in a })
         // OP.GG 는 성적 좋은(tier 3 이상) 증강체만 주므로, 나머지(아수라장 전용 포함)는 희귀도만 보이고 등급은 "자료 없음"
-        let rest = rarity.filter { graded[$0.key] == nil }.mapValues { AugmentOCR.Entry(tier: "자료 없음", note: $0) }
+        let rest = rarity.filter { graded[$0.key] == nil }.mapValues { AugmentOCR.Entry(tier: "자료 없음", note: $0.rarity, blurb: "통계 부족", icon: $0.icon) }
         return graded.merging(rest) { a, _ in a }
+    }
+
+    // 등급(성능)과 선호도(이 챔피언 안 중앙값 이상인지)로 한 줄 평
+    static func blurb(_ grade: String, popular: Bool) -> String {
+        switch (["S", "A"].contains(grade), grade == "D", popular) {
+        case (true, _, true): return "성능과 선호도가 모두 좋음"
+        case (true, _, false): return "숨은 고성능 선택"
+        case (_, true, _): return "성적이 낮은 편"
+        case (_, _, true): return "자주 고르는 무난한 픽"
+        default: return "안정적인 선택"
+        }
     }
 
     // OP.GG 성능 점수를 이 챔피언 증강체 안에서 줄 세워 5등분 → S A B C D
@@ -94,16 +109,21 @@ enum OPGG {
 
     // 증강체 희귀도(실버·골드·프리즘)는 OP.GG 데이터에 없어 Community Dragon(롤 게임 파일 공개본)에서 받는다
     // shortcut: 아레나용 희귀도 표라 무작위 총력전과 다른 증강체가 있으면 틀릴 수 있음, 어긋나면 모드별 표로 바꾸기
-    static var rarityCache: [String: String]?
-    static func rarities() async -> [String: String] {
+    static var rarityCache: [String: (rarity: String, icon: URL?)]?
+    static func rarities() async -> [String: (rarity: String, icon: URL?)] {
         if let r = rarityCache { return r }
         var req = URLRequest(url: URL(string: "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/ko_kr/v1/cherry-augments.json")!)
         req.setValue("Riftsight", forHTTPHeaderField: "User-Agent")  // 기본 User-Agent 는 403
         guard let (d, _) = try? await URLSession.shared.data(for: req),
               let list = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return [:] }
         let ko = ["kSilver": "실버", "kGold": "골드", "kPrismatic": "프리즘"]
+        // 아이콘 경로 /lol-game-data/assets/ASSETS/... → Community Dragon 의 소문자 주소
+        func icon(_ p: String?) -> URL? {
+            p.flatMap { URL(string: "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/"
+                                 + $0.replacingOccurrences(of: "/lol-game-data/assets/", with: "").lowercased()) }
+        }
         let r = Dictionary(list.compactMap { a in
-            (a["nameTRA"] as? String).flatMap { n in ko[a["rarity"] as? String ?? ""].map { (n, $0) } }
+            (a["nameTRA"] as? String).flatMap { n in ko[a["rarity"] as? String ?? ""].map { (n, ($0, icon(a["augmentSmallIconPath"] as? String))) } }
         }, uniquingKeysWith: { a, _ in a })
         if !r.isEmpty { rarityCache = r }
         return r
@@ -240,6 +260,8 @@ enum OPGG {
         let names = ["S": "햇빛", "E": "처형자", "X": "엉뚱", "U": "유나라"]
         assert(closestDecks(seen: ["S", "X"], decks: decks, name: { names[$0] }) == ["내 시너지  엉뚱, 햇빛", "가까운 덱  햇빛 유나라 (시너지 1/2) · 핵심 유나라"], "closestDecks")
         assert(closestDecks(seen: [], decks: decks, name: { names[$0] }).isEmpty)
+        assert(blurb("S", popular: true) == "성능과 선호도가 모두 좋음" && blurb("B", popular: true) == "자주 고르는 무난한 픽"
+               && blurb("D", popular: true) == "성적이 낮은 편" && blurb("C", popular: false) == "안정적인 선택", "blurb")
         let d = (parse(sample) as? [String: Any])?["data"] as? [String: Any]
         let core = (d?["core_items"] as? [String: Any])?["ids_names"] as? [String]
         assert(core == ["악의", "그림자\"불꽃"], "core items")
