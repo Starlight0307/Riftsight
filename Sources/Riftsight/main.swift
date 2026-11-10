@@ -15,6 +15,7 @@ if CommandLine.arguments.contains("--selftest") {
     @Published var card: BuildPanel.Info?  // 롤 빌드가 있으면 글줄 대신 빌드·골드·정보 창으로
     @Published var gold: League.Gold?
     @Published var info: [String] = []     // 게임 정보 창 줄(회복·억제기·피해 유형)
+    @Published var tftDeck: (name: String, stage: String, units: [TFTBoard.Unit])?  // TFT 덱 정보 창 배치도
 }
 
 // 설정 화면(SettingsView)과 오버레이가 함께 쓰는 값. UserDefaults 에 저장돼 다시 켜도 유지
@@ -154,9 +155,15 @@ enum Pref {
                 // 시너지 줄은 "3 햇빛"·"햇빛 2/3" 처럼 숫자가 붙어 읽히므로 숫자·/ 를 빼고 이름과 정확히 같을 때만
                 let seen = Set(lines.compactMap { DDragon.shared.tftTraits[AugmentOCR.norm($0.0.filter { !$0.isNumber && $0 != "/" })] })
                 let advice = OPGG.closestDecks(seen: seen, decks: rawDecks ?? [], name: { names[$0] })
-                model.lines = advice.isEmpty ? (decks ?? []) : advice
+                model.lines = advice.lines.isEmpty ? (decks ?? []) : advice.lines
+                // 배치도: 가까운 덱(시너지를 못 읽었으면 1위 메타 덱)을 지금 레벨 단계로
+                if let deck = advice.best ?? rawDecks?.first {
+                    let stage = TFTBoard.stage(forLevel: (g.all["activePlayer"] as? [String: Any])?["level"] as? Int)
+                    model.tftDeck = ((deck["name"] as? [String: Any])?["ko_KR"] as? String ?? "?", stage, TFTBoard.units(deck, stage: stage))
+                }
                 model.augments = AugmentOCR.hits(AugmentOCR.tft(), lines)
             } else {
+                model.tftDeck = nil
                 let b = await build(g.key, g.name, g.position)
                 model.lines = b.lines
                 model.card = b.data.map { .init(key: g.key, name: g.name, position: g.position, data: $0) }
@@ -184,6 +191,7 @@ enum Pref {
             }
         } else {
             spellsSetFor = nil  // 다음 판 챔프 선택에서 다시 넣도록
+            model.tftDeck = nil
             model.card = nil
             model.info = []
             model.gold = nil

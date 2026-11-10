@@ -70,6 +70,8 @@ import Foundation
 
     // TFT 유닛 키(DA_18_Maokai) → Community Dragon 유닛 그림. OP.GG 키와 이름이 같다
     private var tftIcons: [String: URL] = [:]
+    private(set) var tftCost: [String: Int] = [:]      // TFT 유닛 키 → 코스트(테두리 색)
+    private(set) var tftItems: [String: (name: String, icon: URL?)] = [:]  // TFT 아이템 키(DA_BlueBuff) → 한글 이름·아이콘
     private(set) var tftNames: [String: String] = [:]  // TFT 유닛·시너지 키(DA_18_Solar) → 한글 이름(햇빛)
     private(set) var tftTraits: [String: String] = [:] // 공백 뺀 한글 시너지 이름 → 키 (화면 글자와 맞추기용)
     func tftUnit(_ key: String) -> URL? { tftIcons[key] }
@@ -91,6 +93,10 @@ import Foundation
         }
         guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               let sets = j["sets"] as? [String: [String: Any]] else { return }
+        func png(_ tex: String) -> URL? { URL(string: "https://raw.communitydragon.org/latest/game/" + tex.lowercased().replacingOccurrences(of: ".tex", with: ".png")) }
+        for i in j["items"] as? [[String: Any]] ?? [] {
+            if let k = i["apiName"] as? String, let n = i["name"] as? String { tftItems[k] = (n, (i["icon"] as? String).flatMap(png)) }
+        }
         var out: [String: URL] = [:]
         // 숫자 순서로 돌아 같은 이름이면 최신 시즌 키가 남게 한다
         for set in sets.sorted(by: { (Int($0.key) ?? 0) < (Int($1.key) ?? 0) }).map(\.value) {
@@ -98,11 +104,11 @@ import Foundation
                 if let k = t["apiName"] as? String, let n = t["name"] as? String { tftNames[k] = n; tftTraits[AugmentOCR.norm(n)] = k }
             }
             for c in set["champions"] as? [[String: Any]] ?? [] {
-                if let k = c["apiName"] as? String, let n = c["name"] as? String { tftNames[k] = n }
+                if let k = c["apiName"] as? String, let n = c["name"] as? String { tftNames[k] = n; tftCost[k] = c["cost"] as? Int }
             }
             for c in set["champions"] as? [[String: Any]] ?? [] {
                 guard let k = c["apiName"] as? String, let tile = c["tileIcon"] as? String, !tile.isEmpty else { continue }
-                out[k] = URL(string: "https://raw.communitydragon.org/latest/game/" + tile.lowercased().replacingOccurrences(of: ".tex", with: ".png"))
+                out[k] = png(tile)
             }
         }
         tftIcons = out

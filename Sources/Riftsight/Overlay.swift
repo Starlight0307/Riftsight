@@ -26,7 +26,7 @@ struct OverlayView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                if showPanel && (model.card != nil || !model.lines.isEmpty) {
+                if showPanel && (model.card != nil || !model.lines.isEmpty || model.tftDeck != nil) {
                     let top = corner.hasPrefix("t"), left = corner.hasSuffix("l")
                     VStack(alignment: .leading, spacing: 10 * scale) {
                         if let c = model.card {
@@ -40,11 +40,21 @@ struct OverlayView: View {
                                 }
                             }
                         } else {
-                            Panel(title: model.lines.first ?? "", scale: scale, opacity: opacity) {
+                            if let t = model.tftDeck {
+                                Panel(title: "덱 정보", scale: scale, opacity: opacity) {
+                                    HStack {
+                                        Text(t.name).font(.system(size: 12 * scale, weight: .bold))
+                                        Spacer()
+                                        Text(TFTBoard.stages.first { $0.0 == t.stage }?.1 ?? "").font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(OV.teal)
+                                    }
+                                    TFTBoard(units: t.units, cell: 30 * scale)
+                                }
+                            }
+                            if !model.lines.isEmpty { Panel(title: model.lines.first ?? "", scale: scale, opacity: opacity) {
                                 VStack(alignment: .leading, spacing: 6 * scale) {
                                     ForEach(Array(model.lines.dropFirst().enumerated()), id: \.offset) { Text($1).font(.system(size: 11 * scale, weight: .medium)) }
                                 }
-                            }
+                            } }
                         }
                     }
                     .foregroundStyle(.white)
@@ -311,5 +321,80 @@ struct AugmentBand: View {
         .frame(width: width)
         .background(OV.bg.opacity(0.94), in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(recommended ? OV.grade(hit.tier).opacity(0.8) : OV.stroke))
+    }
+}
+
+// TFT 덱 배치도: 4줄 × 7칸 육각 보드. 단계 = 레벨 5(early)·7(middle)·최종(units, 아이템 포함)
+struct TFTBoard: View {
+    struct Unit { let key: String, x: Int, y: Int, items: [String], stars: Int }
+    static let stages = [("early", "레벨 5"), ("middle", "레벨 7"), ("final", "최종")]
+
+    // OP.GG 덱에서 단계별 유닛. 초·중반은 characterId, 최종은 key 에 들어 있음
+    static func units(_ deck: [String: Any], stage: String) -> [Unit] {
+        let list = stage == "final" ? deck["units"] as? [[String: Any]] : (deck[stage] as? [String: Any])?["units"] as? [[String: Any]]
+        return (list ?? []).compactMap { u in
+            guard let k = (u["key"] ?? u["characterId"]) as? String, let c = u["cell"] as? [String: Int], let x = c["x"], let y = c["y"] else { return nil }
+            return Unit(key: k, x: x, y: y, items: (u["items"] as? [Any] ?? []).compactMap { $0 as? String }, stars: u["tier"] as? Int ?? 0)
+        }
+    }
+
+    // 지금 레벨에 맞는 단계 (오버레이는 눌러 고를 수 없어서)
+    static func stage(forLevel l: Int?) -> String {
+        guard let l else { return "final" }
+        return l <= 5 ? "early" : l <= 7 ? "middle" : "final"
+    }
+
+    let units: [Unit]
+    var cell: CGFloat = 34
+    @ObservedObject private var dd = DDragon.shared
+
+    static func costColor(_ c: Int?) -> Color {
+        [1: Color(white: 0.6), 2: Color(red: 0.2, green: 0.75, blue: 0.4), 3: Color(red: 0.25, green: 0.55, blue: 1),
+         4: Color(red: 0.75, green: 0.35, blue: 0.95), 5: Color(red: 1, green: 0.75, blue: 0.2)][c ?? 0] ?? Color(white: 0.4)
+    }
+
+    var body: some View {
+        let gap = cell * 0.12, rowH = cell * 1.32
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(1...4, id: \.self) { y in
+                HStack(spacing: gap) {
+                    ForEach(1...7, id: \.self) { x in slot(units.first { $0.x == x && $0.y == y }) }
+                }
+                .padding(.leading, y % 2 == 0 ? (cell + gap) / 2 : 0)  // 짝수 줄은 반 칸 밀어 육각 배치
+                .frame(height: rowH, alignment: .top)
+            }
+        }
+    }
+
+    func slot(_ u: Unit?) -> some View {
+        ZStack(alignment: .bottom) {
+            Hex().fill(OV.box).overlay(Hex().stroke(OV.stroke))
+            if let u {
+                Icon(url: dd.tftUnit(u.key), size: cell * 0.86)
+                    .clipShape(Hex())
+                    .overlay(Hex().stroke(Self.costColor(dd.tftCost[u.key]), lineWidth: 2))
+                    .frame(maxHeight: .infinity, alignment: .center)
+                if u.stars > 1 {
+                    Text(String(repeating: "★", count: u.stars)).font(.system(size: cell * 0.2)).foregroundStyle(.yellow)
+                        .frame(maxHeight: .infinity, alignment: .top).offset(y: -cell * 0.14)
+                }
+                HStack(spacing: 1) {
+                    ForEach(Array(u.items.enumerated()), id: \.offset) { Icon(url: dd.tftItems[$1]?.icon, size: cell * 0.3) }
+                }.offset(y: cell * 0.2)
+            }
+        }
+        .frame(width: cell, height: cell)
+    }
+}
+
+struct Hex: Shape {
+    func path(in r: CGRect) -> Path {
+        let w = r.width, h = r.height
+        return Path { p in
+            p.move(to: CGPoint(x: w / 2, y: 0))
+            p.addLine(to: CGPoint(x: w, y: h * 0.25)); p.addLine(to: CGPoint(x: w, y: h * 0.75))
+            p.addLine(to: CGPoint(x: w / 2, y: h)); p.addLine(to: CGPoint(x: 0, y: h * 0.75)); p.addLine(to: CGPoint(x: 0, y: h * 0.25))
+            p.closeSubpath()
+        }
     }
 }

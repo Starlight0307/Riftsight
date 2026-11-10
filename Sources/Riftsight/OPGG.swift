@@ -160,18 +160,18 @@ enum OPGG {
 
     // 화면에서 읽은 내 시너지와 메타 덱을 비교: 내 시너지 한 줄 + 가장 많이 겹치는 덱 2개
     // shortcut: 시너지 이름만 비교(유닛 수·등급 무시), 화면 글자 인식이 시너지 목록을 놓치면 덱 추천도 빠짐
-    static func closestDecks(seen: Set<String>, decks: [[String: Any]], name: (String) -> String?) -> [String] {
-        guard !seen.isEmpty else { return [] }
+    static func closestDecks(seen: Set<String>, decks: [[String: Any]], name: (String) -> String?) -> (lines: [String], best: [String: Any]?) {
+        guard !seen.isEmpty else { return ([], nil) }
         let mine = seen.compactMap(name).sorted()
         let scored = decks.map { d -> (deck: [String: Any], hit: Int, total: Int) in
             let active = (d["traits"] as? [[String: Any]] ?? []).filter { ($0["style"] as? Int ?? 0) > 0 }.compactMap { $0["key"] as? String }
             return (d, active.filter(seen.contains).count, active.count)
         }.filter { $0.hit > 0 }.sorted { $0.hit > $1.hit }
-        return ["내 시너지  " + mine.joined(separator: ", ")] + scored.prefix(2).map { s in
+        return (["내 시너지  " + mine.joined(separator: ", ")] + scored.prefix(2).map { s in
             let deckName = (s.deck["name"] as? [String: Any])?["ko_KR"] as? String ?? "?"
             let core = (s.deck["units"] as? [[String: Any]] ?? []).filter { $0["isCore"] as? Bool == true }.compactMap { ($0["key"] as? String).flatMap(name) }
             return "가까운 덱  \(deckName) (시너지 \(s.hit)/\(s.total))" + (core.isEmpty ? "" : " · 핵심 " + core.joined(separator: ", "))
-        }
+        }, scored.first?.deck)
     }
 
     // TFT 메타 덱 상위 5개
@@ -258,8 +258,10 @@ enum OPGG {
             ["name": ["ko_KR": "다른 덱"], "traits": [["key": "Z", "style": 2]], "units": []],
         ]
         let names = ["S": "햇빛", "E": "처형자", "X": "엉뚱", "U": "유나라"]
-        assert(closestDecks(seen: ["S", "X"], decks: decks, name: { names[$0] }) == ["내 시너지  엉뚱, 햇빛", "가까운 덱  햇빛 유나라 (시너지 1/2) · 핵심 유나라"], "closestDecks")
-        assert(closestDecks(seen: [], decks: decks, name: { names[$0] }).isEmpty)
+        let near = closestDecks(seen: ["S", "X"], decks: decks, name: { names[$0] })
+        assert(near.lines == ["내 시너지  엉뚱, 햇빛", "가까운 덱  햇빛 유나라 (시너지 1/2) · 핵심 유나라"], "closestDecks")
+        assert((near.best?["name"] as? [String: Any])?["ko_KR"] as? String == "햇빛 유나라", "closest best")
+        assert(closestDecks(seen: [], decks: decks, name: { names[$0] }).lines.isEmpty)
         assert(blurb("S", popular: true) == "성능과 선호도가 모두 좋음" && blurb("B", popular: true) == "자주 고르는 무난한 픽"
                && blurb("D", popular: true) == "성적이 낮은 편" && blurb("C", popular: false) == "안정적인 선택", "blurb")
         let d = (parse(sample) as? [String: Any])?["data"] as? [String: Any]

@@ -23,6 +23,8 @@ enum Theme {
     @Published var detail: [String: Any]?
     @Published var detailFailed = false
     @Published var decks: [[String: Any]] = []
+    @Published var openDeck: String?          // 펼친 덱 id (배치도·아이템 보기)
+    @Published var deckStage = "final"
 
     func loadTiers() async {
         guard tiers.isEmpty else { return }
@@ -279,7 +281,10 @@ struct TFTView: View {
         let deck = stat?["deck"] as? [String: Any]
         let units = (d["units"] as? [[String: Any]] ?? []).sorted { ($0["isCore"] as? Bool ?? false) && !($1["isCore"] as? Bool ?? false) }
         let op = stat?["opTier"] as? String ?? "-"
-        return HStack(spacing: 14) {
+        let id = d["id"] as? String ?? ""
+        let open = store.openDeck == id
+        return VStack(alignment: .leading, spacing: 14) {
+        HStack(spacing: 14) {
             Text(op).font(.system(size: 14, weight: .heavy)).frame(width: 40, height: 40)
                 .background(op == "OP" ? Theme.tier(1) : op == "S" ? Theme.accent : Theme.tier(3), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 8) {
@@ -299,9 +304,54 @@ struct TFTView: View {
             Stat(title: "평균 등수", value: String(format: "%.2f", deck?["avgPlacement"] as? Double ?? 0))
             Stat(title: "순방률", value: String(format: "%.0f%%", (deck?["top4Rate"] as? Double ?? 0) * 100))
             Stat(title: "1등률", value: String(format: "%.0f%%", (deck?["winRate"] as? Double ?? 0) * 100))
+            Text(open ? "⌃" : "⌄").foregroundStyle(Theme.sub)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { store.openDeck = open ? nil : id }
+        if open { deckDetail(d) }
         }
         .padding(14)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+extension TFTView {
+    // 펼친 덱: 레벨 탭 + 배치도 + (최종) 챔피언별 아이템
+    func deckDetail(_ d: [String: Any]) -> some View {
+        let units = TFTBoard.units(d, stage: store.deckStage)
+        return HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    ForEach(TFTBoard.stages, id: \.0) { key, title in
+                        Button(title) { store.deckStage = key }.buttonStyle(.plain)
+                            .font(.system(size: 12, weight: .bold))
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .foregroundStyle(store.deckStage == key ? OV.teal : Theme.sub)
+                            .background(store.deckStage == key ? OV.teal.opacity(0.12) : Theme.line, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+                if units.isEmpty { Text("이 단계 배치 정보가 없어요").foregroundStyle(Theme.sub) }
+                else { TFTBoard(units: units, cell: 48) }
+            }
+            let withItems = units.filter { !$0.items.isEmpty }
+            if !withItems.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("챔피언별 아이템").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.sub)
+                    ForEach(Array(withItems.enumerated()), id: \.offset) { _, u in
+                        HStack(spacing: 8) {
+                            Icon(url: dd.tftUnit(u.key), size: 30)
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(TFTBoard.costColor(dd.tftCost[u.key]), lineWidth: 2))
+                            Text(dd.tftNames[u.key] ?? u.key).font(.system(size: 12, weight: .bold)).frame(width: 70, alignment: .leading)
+                            ForEach(Array(u.items.enumerated()), id: \.offset) { _, i in
+                                Icon(url: dd.tftItems[i]?.icon, size: 26).help(dd.tftItems[i]?.name ?? i)
+                            }
+                            Text(u.items.compactMap { dd.tftItems[$0]?.name }.joined(separator: ", "))
+                                .font(.system(size: 11)).foregroundStyle(Theme.sub)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
